@@ -1,0 +1,12 @@
+node_modules/
+.bun/
+bun.lock
+.next/
+*.tsbuildinfo
+out/
+coverage/
+playwright-report/
+test-results/
+.DS_Store
+.env*
+!.env.example
