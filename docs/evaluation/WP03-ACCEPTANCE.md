@@ -155,3 +155,6 @@ Allowed status labels:
 ### Next Exact Task
 1. Owner manually syncs/pushes the WP03 workspace changes to GitHub (`Centaurioun/Scientific-Lexicon-App`) and runs `.github/workflows/termforge-native-qualification.yml` to record independent native Linux `npm ci` + `test:gate` + `test:e2e` (including `tests/e2e/s3-data-operations.spec.ts`) qualification evidence.
 2. **Stop before WP04.** No WP04 work is authorized.
+
+## Independent native execution and transition addendum — 2026-11-27
+173/173 PASS at `e9f91a3b816b999599f19172cdcd84fd9f9cda23`, run 46058256556. [Coordinator qualification](WP03-FINAL-QUALIFICATION.md) records conditional engineering acceptance, H1/H2 source-review findings and H3 erratum required. This supersedes pending native status only for tested source. H1–H3 are mandatory WP04 F1 work; no independent acceptance of later source until combined native execution. G4 unchanged.

@@ -26,3 +26,6 @@ WP01 G3 synthetic PASS integrated at `09a505b12db12b5830921120020d3084fe080e8c`.
 
 ## Current checkpoint — WP02 closed / WP03 start
 [WP02 final bounded acceptance](evaluation/WP02-FINAL-QUALIFICATION.md) at `f7857d8d9e11fbcd5e40b1731f8ad52217ea54fd`; [WP03 Data Operations](WP03_DATA_OPERATIONS.md), [design](superpowers/specs/2026-11-27-wp03-data-operations-design.md), [single execution handoff](handoffs/WP02-CLOSE-WP03-START.md). Prior checkpoint sections historical. G4 NOT READY; G5 NOT ESTABLISHED; no release. Owner manually pulls and supplies combined prompt.
+
+## Current checkpoint — WP03 native PASS, conditional WP04 transition
+[WP03 qualification](evaluation/WP03-FINAL-QUALIFICATION.md), [combined handoff](handoffs/WP03-CLOSE-WP04-START.md), [WP04 plan](WP04_SOURCE_ENRICHMENT_AI.md), [design](superpowers/specs/2026-11-27-wp04-source-enrichment-ai-design.md). H1–H3 mandatory at F1 before F2. Native combined verification pending for new source. G4 NOT READY; G5 NOT ESTABLISHED; release NOT APPROVED.

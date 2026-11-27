@@ -1,6 +1,6 @@
 # WP04 / S4 — Source Enrichment & AI: bounded synthetic design v0.1
 
-Status: conditional proposal under approved Master Design v1.0 §§4,6–9; execute only after WP03 independent transition acceptance and owner combined prompt. No claim that WP03 source was inspected at planning time. This six-cycle design record is a coordinator review of approved architecture and pinned research, not a claim of installed skill execution or independent agent review. Builder must cross-check actual WP03 code before implementation. No material schema, network, rights or dependency authorization.
+Status: bounded design under approved Master Design v1.0 §§4,6–9; WP03 native PASS independently verified at e9f91a3; engineering acceptance conditional on F1 H1–H3 before F2, authorized by owner combined prompt. Initial design prepared before WP03 source inspection; transition review now recorded in docs/evaluation/WP03-FINAL-QUALIFICATION.md. This six-cycle design record is a coordinator review of approved architecture and pinned research, not a claim of installed skill execution or independent agent review. Builder must cross-check actual WP03 code before implementation. No material schema, network, rights or dependency authorization.
 
 ## Cycle 1 — Intent and alternatives
 
