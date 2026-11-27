@@ -131,10 +131,14 @@ export function ExtractionWorkspace() {
     const repo = getBrowserLibraryRepository();
     const unsub = repo.subscribeRevision(() => {
       matcherRef.current?.invalidate();
+      abortRef.current?.abort();
+      abortRef.current = null;
       requestSeqRef.current += 1;
       proposalSeqRef.current += 1;
+      setAnalyzing(false);
       setPendingProposal(null);
       setPendingRetainMeta(null);
+      setStatusNotice('Library revision changed; active extraction and pending proposals were invalidated.');
       void loadSnapshot();
     });
     return () => {

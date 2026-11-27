@@ -42,6 +42,11 @@ describe('D5: Session corpus statistics and canonical C-value ranking', () => {
       occurrences.push(makeOccurrence(`occ-psc-${i}`, offset, 'periodontal stem cell'));
       offset += 30;
     }
+    // One longer term contains the nested sequence twice but remains one container type.
+    for (let i = 0; i < 2; i += 1) {
+      occurrences.push(makeOccurrence(`occ-repeat-container-${i}`, offset, 'stem cell stem cell'));
+      offset += 40;
+    }
     // 7 occurrences of unnested 2-token term "bone marrow"
     for (let i = 0; i < 7; i += 1) {
       occurrences.push(makeOccurrence(`occ-bm-${i}`, offset, 'bone marrow'));
@@ -53,13 +58,13 @@ describe('D5: Session corpus statistics and canonical C-value ranking', () => {
     const stemCell = ranked.find((r) => r.group.surface === 'stem cell')!;
     const boneMarrow = ranked.find((r) => r.group.surface === 'bone marrow')!;
 
-    // Hand-computed nested: log2(2) * (7 - (2 + 4) / 2) = 1 * (7 - 3) = 4
+    // Hand-computed nested across three distinct container types: log2(2) * (7 - (2 + 4 + 2) / 3) = 13/3
     expect(stemCell.unigramGroup).toBe(false);
-    expect(stemCell.score).toBeCloseTo(4, 10);
+    expect(stemCell.score).toBeCloseTo(13 / 3, 10);
     expect(stemCell.features.frequency).toBe(7);
     expect(stemCell.features.tokenCount).toBe(2);
-    expect(stemCell.features.nestedContainerCount).toBe(2);
-    expect(stemCell.features.nestedContainerFreqSum).toBe(6);
+    expect(stemCell.features.nestedContainerCount).toBe(3);
+    expect(stemCell.features.nestedContainerFreqSum).toBe(8);
 
     // Hand-computed unnested: log2(2) * 7 = 7
     expect(boneMarrow.unigramGroup).toBe(false);

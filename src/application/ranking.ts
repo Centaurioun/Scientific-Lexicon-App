@@ -168,10 +168,13 @@ export function rankCandidates(
     Array<{ surface: string; frequency: number }>
   >();
   for (const [surface, info] of surfaceTypes.entries()) {
+    const sequencesInContainer = new Set<string>();
     for (let start = 0; start < info.tokens.length; start += 1) {
       for (let end = start + 2; end <= info.tokens.length; end += 1) {
         if (end - start >= info.tokens.length) continue;
         const key = JSON.stringify(info.tokens.slice(start, end));
+        if (sequencesInContainer.has(key)) continue;
+        sequencesInContainer.add(key);
         const containers = containersByTokenSequence.get(key);
         const container = { surface, frequency: info.frequency };
         if (containers) containers.push(container);

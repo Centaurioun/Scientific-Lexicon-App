@@ -162,9 +162,23 @@ describe('D11: Controlled factorial synthetic grammar and ranking comparison', (
     for (const rankMode of ['source-order', 'frequency', 'c-value'] as const) {
       const s1 = configurations.find((c) => c.grammarMode === 's1-grammar-1' && c.rankMode === rankMode)!;
       const s2 = configurations.find((c) => c.grammarMode === 's2-grammar-2' && c.rankMode === rankMode)!;
-      // Span metrics are independent of ranking mode; each grammar is compared under the same ranker.
-      expect(s1.metrics.tp).toBe(configurations[0].metrics.tp);
-      expect(s2.metrics.tp).toBe(configurations[3].metrics.tp);
+      // All full-set span metrics are independent of ranking; only at-k depends on order.
+      for (const [candidate, reference] of [
+        [s1.metrics, configurations[0].metrics],
+        [s2.metrics, configurations[3].metrics],
+      ] as const) {
+        expect(candidate.tp).toBe(reference.tp);
+        expect(candidate.fp).toBe(reference.fp);
+        expect(candidate.fn).toBe(reference.fn);
+        expect(candidate.microPrecision).toBe(reference.microPrecision);
+        expect(candidate.microRecall).toBe(reference.microRecall);
+        expect(candidate.microF1).toBe(reference.microF1);
+        expect(candidate.macroPrecision).toBe(reference.macroPrecision);
+        expect(candidate.macroRecall).toBe(reference.macroRecall);
+        expect(candidate.macroF1).toBe(reference.macroF1);
+        expect(candidate.unknownRecall).toBe(reference.unknownRecall);
+        expect(candidate.nestedRecall).toBe(reference.nestedRecall);
+      }
       expect(s2.metrics.unknownRecall!).toBeGreaterThan(s1.metrics.unknownRecall!);
       expect(s2.totalKnown).toBe(s1.totalKnown);
       expect(s2.totalAmbiguous).toBe(s1.totalAmbiguous);
