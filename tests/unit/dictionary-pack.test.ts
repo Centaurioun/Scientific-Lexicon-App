@@ -189,4 +189,20 @@ describe('D6: Local dictionary pack staging, validation, and read-only lookup', 
       }),
     ).rejects.toThrow(/invalid UTF-8/i);
   });
+
+  it('bounds dense repeated-surface lookup while sharing entry collections across matching spans', async () => {
+    const payload = createValidSyntheticPackPayload();
+    payload.entries = Array.from({ length: 100 }, (_, i) => ({
+      id: `dense-entry-${i}`,
+      text: 'PD',
+      language: { kind: 'shared' as const },
+      externalId: `SYNTH:${i}`,
+    }));
+    const pack = parseDictionaryPack(payload);
+    const text = Array.from({ length: 2_000 }, () => 'PD').join(' ');
+    const suggestions = await lookupDictionaryPack(text, pack);
+    expect(suggestions).toHaveLength(2_000);
+    expect(suggestions[0].entries).toHaveLength(100);
+    expect(suggestions[0].entries).toBe(suggestions.at(-1)?.entries);
+  });
 });

@@ -113,6 +113,18 @@ describe('D2: Structured Markdown and document representation', () => {
     }
   });
 
+  it('keeps decomposed combining marks and supplementary-plane characters in UTF-16 coordinate slices', () => {
+    const source = '# C\u0301ell 🧬\r\nTNF-α and 𐐷-cell HLA-B27.';
+    const parsed = parseMarkdownDocument(source);
+    expect(parsed.text).toBe(source);
+    for (const surface of ['C\u0301ell', '🧬', 'TNF-α', '𐐷-cell', 'HLA-B27']) {
+      const start = source.indexOf(surface);
+      expect(start).toBeGreaterThanOrEqual(0);
+      expect(parsed.text.slice(start, start + surface.length)).toBe(surface);
+      expect(isSpanEligibleInDocument(start, start + surface.length, parsed)).toBe(true);
+    }
+  });
+
   it('reads TXT and Markdown files via readDocument with fatal UTF-8 check, byte limits, and AbortSignal', async () => {
     const txtFile = makeFakeFile('sample.txt', 'Periodontal ligament stem cells express TNF-α.');
     const txtDoc = await readDocument(txtFile, DEFAULT_PROCESSING_LIMITS);
