@@ -15,28 +15,17 @@ interface LineSlice {
 
 function splitLinesWithOffsets(text: string): LineSlice[] {
   const lines: LineSlice[] = [];
-  let pos = 0;
-  while (pos < text.length) {
-    const lf = text.indexOf('\n', pos);
-    if (lf === -1) {
-      const end = text.endsWith('\r') ? text.length - 1 : text.length;
-      lines.push({
-        start: pos,
-        end,
-        rawEnd: text.length,
-        content: text.slice(pos, end),
-      });
-      break;
-    }
-    const hasCr = lf > pos && text.charCodeAt(lf - 1) === 0x0d;
-    const end = hasCr ? lf - 1 : lf;
-    lines.push({
-      start: pos,
-      end,
-      rawEnd: lf + 1,
-      content: text.slice(pos, end),
-    });
-    pos = lf + 1;
+  const lineBreak = /\r\n|\r|\n/g;
+  let start = 0;
+  let match = lineBreak.exec(text);
+  while (match) {
+    const end = match.index;
+    lines.push({ start, end, rawEnd: lineBreak.lastIndex, content: text.slice(start, end) });
+    start = lineBreak.lastIndex;
+    match = lineBreak.exec(text);
+  }
+  if (start < text.length) {
+    lines.push({ start, end: text.length, rawEnd: text.length, content: text.slice(start) });
   }
   return lines;
 }

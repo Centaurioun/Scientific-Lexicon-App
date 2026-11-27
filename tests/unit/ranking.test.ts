@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { buildCandidateGroups, rankCandidates } from '@/application/ranking';
+import { buildCandidateGroups, isStrictTokenSubsequence, rankCandidates, tokenizeSurfaceForRanking } from '@/application/ranking';
 import type { Occurrence } from '@/domain/schema';
+import type { Token } from '@/domain/extraction';
 
 function makeOccurrence(
   id: string,
@@ -144,5 +145,93 @@ describe('D5: Session corpus statistics and canonical C-value ranking', () => {
 
     // Empty input returns empty array cleanly
     expect(rankCandidates([], 'c-value')).toEqual([]);
+  });
+
+  it('keeps C-value container statistics stable when the UI displays a filtered subset', () => {
+    const all: Occurrence[] = [];
+    let offset = 0;
+    for (let i = 0; i < 7; i += 1) {
+      all.push(makeOccurrence(`stem-${i}`, offset, 'stem cell', { state: 'new-candidate' }));
+      offset += 20;
+    }
+    for (let i = 0; i < 2; i += 1) {
+      all.push(makeOccurrence(`mes-${i}`, offset, 'mesenchymal stem cell', { state: 'known-form' }));
+      offset += 30;
+    }
+    for (let i = 0; i < 4; i += 1) {
+      all.push(makeOccurrence(`per-${i}`, offset, 'periodontal stem cell', { state: 'known-form' }));
+      offset += 30;
+    }
+    const full = rankCandidates(all, 'c-value').find((item) => item.group.surface === 'stem cell')!;
+    const displaySubset = all.filter((occ) => occ.state === 'new-candidate');
+    const subset = rankCandidates(displaySubset, 'c-value').find((item) => item.group.surface === 'stem cell')!;
+    expect(full.score).toBeCloseTo(4, 10);
+    expect(subset.score).toBeCloseTo(7, 10);
+  });
+
+  it('uses explicit NLP token spans for ranking token counts and nesting', () => {
+    const occurrence = makeOccurrence('hyphen', 0, 'stem-cell');
+    const tokens: Token[] = [
+      { start: 0, end: 4, surface: 'stem', pos: 'NOUN', sentenceId: 0 },
+      { start: 4, end: 5, surface: '-', pos: 'PUNCT', sentenceId: 0 },
+      { start: 5, end: 9, surface: 'cell', pos: 'NOUN', sentenceId: 0 },
+    ];
+    const ranked = rankCandidates([occurrence], 'c-value', tokens);
+    expect(ranked[0].features.tokenCount).toBe(3);
+    expect(ranked[0].unigramGroup).toBe(false);
+  });
+
+  it('matches an independent pairwise C-value reference on a mixed synthetic corpus', () => {
+    const occurrences = [
+      ...Array.from({ length: 7 }, (_, i) => makeOccurrence(`a-${i}`, i * 10, 'stem cell')),
+      ...Array.from({ length: 2 }, (_, i) => makeOccurrence(`b-${i}`, 100 + i * 10, 'mesenchymal stem cell')),
+      ...Array.from({ length: 4 }, (_, i) => makeOccurrence(`c-${i}`, 150 + i * 10, 'periodontal stem cell')),
+      ...Array.from({ length: 3 }, (_, i) => makeOccurrence(`d-${i}`, 220 + i * 10, 'bone marrow')),
+    ];
+    const groups = buildCandidateGroups(occurrences);
+    const distinctTypes = new Map<string, { tokens: string[]; frequency: number }>();
+    for (const group of groups) {
+      const existing = distinctTypes.get(group.surface);
+      if (existing) existing.frequency += group.frequency;
+      else distinctTypes.set(group.surface, {
+        tokens: tokenizeSurfaceForRanking(group.surface),
+        frequency: group.frequency,
+      });
+    }
+    const reference = groups.map((group) => {
+      const tokens = tokenizeSurfaceForRanking(group.surface);
+      const containers = [...distinctTypes.entries()]
+        .filter(([, item]) => isStrictTokenSubsequence(tokens, item.tokens))
+        .map(([surface, item]) => ({ surface, frequency: item.frequency }));
+      const meanContainerFrequency = containers.length
+        ? containers.reduce((sum, item) => sum + item.frequency, 0) / containers.length
+        : 0;
+      return [group.surface, Math.log2(tokens.length) * (group.frequency - meanContainerFrequency)] as const;
+    });
+    const actual = rankCandidates(occurrences, 'c-value');
+    for (const [surface, score] of reference) {
+      const ranked = actual.find((item) => item.group.surface === surface)!;
+      expect(ranked.score).toBeCloseTo(score, 10);
+    }
+  });
+
+  it('measures repeated and high-diversity workloads at the authorized occurrence scales', () => {
+    const measurements: Record<string, number> = {};
+    for (const count of [5_000, 10_000]) {
+      const repeated = Array.from({ length: count }, (_, i) =>
+        makeOccurrence(`repeat-${i}`, i * 20, 'stem cell'),
+      );
+      const repeatedStart = performance.now();
+      expect(rankCandidates(repeated, 'c-value')).toHaveLength(1);
+      measurements[`repeated-${count}`] = performance.now() - repeatedStart;
+
+      const diverse = Array.from({ length: count }, (_, i) =>
+        makeOccurrence(`type-${i}`, i * 20, `term${i} marker`),
+      );
+      const diverseStart = performance.now();
+      expect(rankCandidates(diverse, 'c-value')).toHaveLength(count);
+      measurements[`distinct-${count}`] = performance.now() - diverseStart;
+    }
+    console.info(`WP02_RANKING_BENCHMARK_MS=${JSON.stringify(measurements)}`);
   });
 });

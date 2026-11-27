@@ -3,6 +3,7 @@ import { AhoCorasickRegisteredMatcher } from '@/adapters/matching/registered-mat
 import { WinkNlpEngine } from '@/adapters/nlp/wink-engine';
 import { parseMarkdownDocument } from '@/adapters/documents/markdown';
 import { analyzeText } from '@/application/extraction';
+import { readDictionaryPackFile } from '@/application/dictionary-pack-file';
 import { lookupDictionaryPack } from '@/application/dictionary-lookup';
 import {
   DictionaryPackValidationError,
@@ -68,6 +69,11 @@ describe('D6: Local dictionary pack staging, validation, and read-only lookup', 
     expect(valid.id).toBe('pack-synth-bio-v1');
     expect(valid.entries).toHaveLength(4);
 
+    const noUri = createValidSyntheticPackPayload();
+    // @ts-expect-error testing runtime rejection of missing required provenance
+    delete noUri.source.uri;
+    expect(() => parseDictionaryPack(noUri)).toThrow(DictionaryPackValidationError);
+
     // Duplicate entry IDs rejected
     const dup = createValidSyntheticPackPayload();
     dup.entries[1].id = dup.entries[0].id;
@@ -106,6 +112,14 @@ describe('D6: Local dictionary pack staging, validation, and read-only lookup', 
     expect(pdMatches[0].license).toBe('CC0-1.0-Synthetic-Fixture');
 
     expect(suggestions.some((s) => s.surface === 'Na+/K+-ATPase')).toBe(true);
+  });
+
+  it('rejects dictionary lookup metadata whose text differs from the analyzed coordinate source', async () => {
+    const pack = parseDictionaryPack(createValidSyntheticPackPayload());
+    const parsed = parseMarkdownDocument('PD in the original source.');
+    await expect(
+      lookupDictionaryPack('different source text', pack, { parsedDocument: parsed }),
+    ).rejects.toThrow(/must exactly match/i);
   });
 
   it('keeps dictionary pack hints strictly read-only (never known-form or DB mutation) and enforces shared OccurrenceLimitTracker', async () => {
@@ -151,5 +165,28 @@ describe('D6: Local dictionary pack staging, validation, and read-only lookup', 
     expect(getSessionDictionaryPack()?.id).toBe(pack.id);
     clearSessionDictionaryPack();
     expect(getSessionDictionaryPack()).toBeNull();
+  });
+
+  it('rejects oversized pack files before reading and rejects malformed UTF-8', async () => {
+    let readCount = 0;
+    await expect(
+      readDictionaryPackFile({
+        size: MAX_DICTIONARY_PACK_BYTES + 1,
+        async arrayBuffer() {
+          readCount += 1;
+          return new ArrayBuffer(0);
+        },
+      }),
+    ).rejects.toThrow(/rejected without reading/i);
+    expect(readCount).toBe(0);
+
+    await expect(
+      readDictionaryPackFile({
+        size: 2,
+        async arrayBuffer() {
+          return new Uint8Array([0xc3, 0x28]).buffer;
+        },
+      }),
+    ).rejects.toThrow(/invalid UTF-8/i);
   });
 });

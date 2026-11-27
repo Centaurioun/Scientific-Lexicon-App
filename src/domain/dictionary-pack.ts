@@ -16,7 +16,7 @@ export class DictionaryPackValidationError extends Error {
 export const DictionaryPackSourceSchema = z
   .object({
     authority: NonBlankTextSchema,
-    uri: NonBlankTextSchema.optional(),
+    uri: NonBlankTextSchema,
     release: NonBlankTextSchema,
     license: NonBlankTextSchema,
   })

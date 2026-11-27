@@ -1,5 +1,6 @@
 import { compareCodeUnits, type Occurrence } from '@/domain/schema';
 import type { CandidateGroup, RankedCandidate, RankMode } from '@/domain/ranking';
+import type { Token } from '@/domain/extraction';
 
 export function tokenizeSurfaceForRanking(surface: string): string[] {
   return surface
@@ -32,9 +33,10 @@ export function isStrictTokenSubsequence(
 }
 
 function makeGroupKey(occ: Occurrence): string {
-  const concepts = [...occ.conceptIds].sort(compareCodeUnits).join(',');
-  const exprs = [...occ.expressionIds].sort(compareCodeUnits).join(',');
-  return `${occ.surface}\u0000${occ.state}\u0000${concepts}\u0000${exprs}`;
+  const concepts = [...occ.conceptIds].sort(compareCodeUnits);
+  const exprs = [...occ.expressionIds].sort(compareCodeUnits);
+  // Encode tuple boundaries structurally: surfaces and opaque IDs may contain delimiters.
+  return JSON.stringify([occ.surface, occ.state, concepts, exprs]);
 }
 
 /**
@@ -120,12 +122,31 @@ function compareGroupDeterministicTie(a: CandidateGroup, b: CandidateGroup): num
 export function rankCandidates(
   occurrences: readonly Occurrence[],
   rankMode: RankMode,
+  sourceTokens: readonly Token[] = [],
 ): RankedCandidate[] {
   if (occurrences.length === 0) return [];
 
   const groups = buildCandidateGroups(occurrences);
 
   // Build distinct surface-type table for exact token-sequence nesting lookup in C-value
+  const occurrenceById = new Map(occurrences.map((occ) => [occ.id, occ]));
+  const orderedTokens = [...sourceTokens].sort((a, b) => a.start - b.start || a.end - b.end);
+  const tokensForOccurrence = (occurrence: Occurrence): string[] => {
+    let low = 0;
+    let high = orderedTokens.length;
+    while (low < high) {
+      const mid = (low + high) >>> 1;
+      if (orderedTokens[mid].start < occurrence.start) low = mid + 1;
+      else high = mid;
+    }
+    const matched: string[] = [];
+    for (let i = low; i < orderedTokens.length && orderedTokens[i].start < occurrence.end; i += 1) {
+      if (orderedTokens[i].end <= occurrence.end) matched.push(orderedTokens[i].surface);
+    }
+    // Some known forms are not segmented by the NLP engine. Keep a deterministic
+    // whitespace fallback for those forms; candidate spans use the explicit NLP tokens.
+    return matched.length > 0 ? matched : tokenizeSurfaceForRanking(occurrence.surface);
+  };
   const surfaceTypes = new Map<string, { tokens: string[]; frequency: number }>();
   for (const group of groups) {
     const existing = surfaceTypes.get(group.surface);
@@ -133,28 +154,34 @@ export function rankCandidates(
       existing.frequency += group.frequency;
     } else {
       surfaceTypes.set(group.surface, {
-        tokens: tokenizeSurfaceForRanking(group.surface),
+        tokens: tokensForOccurrence(occurrenceById.get(group.occurrenceIds[0])!),
         frequency: group.frequency,
       });
     }
   }
 
-  // Bucket surface types by token length for efficient strict-superset checks
-  const typesByLength = new Map<number, Array<{ surface: string; tokens: string[]; frequency: number }>>();
-  let maxTokenLen = 1;
+  // Index every contiguous multiword subsequence by exact token sequence. WP02
+  // candidates are bounded to eight NLP tokens, so this costs O(types * 8²)
+  // plus the actual containment edges instead of comparing every type pair.
+  const containersByTokenSequence = new Map<
+    string,
+    Array<{ surface: string; frequency: number }>
+  >();
   for (const [surface, info] of surfaceTypes.entries()) {
-    const len = info.tokens.length;
-    if (len > maxTokenLen) maxTokenLen = len;
-    const bucket = typesByLength.get(len);
-    if (bucket) {
-      bucket.push({ surface, tokens: info.tokens, frequency: info.frequency });
-    } else {
-      typesByLength.set(len, [{ surface, tokens: info.tokens, frequency: info.frequency }]);
+    for (let start = 0; start < info.tokens.length; start += 1) {
+      for (let end = start + 2; end <= info.tokens.length; end += 1) {
+        if (end - start >= info.tokens.length) continue;
+        const key = JSON.stringify(info.tokens.slice(start, end));
+        const containers = containersByTokenSequence.get(key);
+        const container = { surface, frequency: info.frequency };
+        if (containers) containers.push(container);
+        else containersByTokenSequence.set(key, [container]);
+      }
     }
   }
 
   const ranked: RankedCandidate[] = groups.map((group) => {
-    const tokens = tokenizeSurfaceForRanking(group.surface);
+    const tokens = surfaceTypes.get(group.surface)?.tokens ?? tokenizeSurfaceForRanking(group.surface);
     const n = tokens.length;
     const isUnigram = n < 2;
 
@@ -213,19 +240,7 @@ export function rankCandidates(
       };
     }
 
-    const containers: Array<{ surface: string; frequency: number }> = [];
-    for (let longerLen = n + 1; longerLen <= maxTokenLen; longerLen += 1) {
-      const bucket = typesByLength.get(longerLen);
-      if (!bucket) continue;
-      for (const candidateContainer of bucket) {
-        if (isStrictTokenSubsequence(tokens, candidateContainer.tokens)) {
-          containers.push({
-            surface: candidateContainer.surface,
-            frequency: candidateContainer.frequency,
-          });
-        }
-      }
-    }
+    const containers = containersByTokenSequence.get(JSON.stringify(tokens)) ?? [];
 
     containers.sort((a, b) => compareCodeUnits(a.surface, b.surface));
     const nestedCount = containers.length;
@@ -278,8 +293,8 @@ export function rankCandidates(
       if (b.group.frequency !== a.group.frequency) {
         return b.group.frequency - a.group.frequency;
       }
-      if (b.group.tokenCount !== a.group.tokenCount) {
-        return b.group.tokenCount - a.group.tokenCount;
+      if (b.features.tokenCount !== a.features.tokenCount) {
+        return b.features.tokenCount - a.features.tokenCount;
       }
       return compareGroupDeterministicTie(a.group, b.group);
     });

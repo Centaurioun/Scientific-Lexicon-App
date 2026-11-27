@@ -16,12 +16,12 @@ import {
 } from '@/application/library';
 import { parseDocumentText, readDocument } from '@/application/document-input';
 import { rankCandidates } from '@/application/ranking';
+import { readDictionaryPackFile } from '@/application/dictionary-pack-file';
 import { AppHeader } from '@/components/AppHeader';
 import { ChangeApprovalDialog } from '@/components/ChangeApprovalDialog';
 import type { CandidateGrammarMode } from '@/domain/candidate-evidence';
 import type { ChangePayload, ProposedChange } from '@/domain/changes';
 import {
-  parseDictionaryPackJson,
   type DictionaryPack,
 } from '@/domain/dictionary-pack';
 import type { DocumentFormat } from '@/domain/document-input';
@@ -99,6 +99,8 @@ export function ExtractionWorkspace() {
   const matcherRef = useRef<RevisionCachedRegisteredMatcher | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const requestSeqRef = useRef(0);
+  const proposalSeqRef = useRef(0);
+  const packUploadSeqRef = useRef(0);
 
   if (!nlpRef.current) {
     nlpRef.current = new BrowserLocalNlpEngine();
@@ -129,6 +131,11 @@ export function ExtractionWorkspace() {
     const repo = getBrowserLibraryRepository();
     const unsub = repo.subscribeRevision(() => {
       matcherRef.current?.invalidate();
+      requestSeqRef.current += 1;
+      proposalSeqRef.current += 1;
+      setPendingProposal(null);
+      setPendingRetainMeta(null);
+      void loadSnapshot();
     });
     return () => {
       unsub();
@@ -225,10 +232,12 @@ export function ExtractionWorkspace() {
   };
 
   const handleDictionaryPackUpload = async (file: File) => {
+    const contextSeq = requestSeqRef.current;
+    const uploadSeq = ++packUploadSeqRef.current;
     setPackError(null);
     try {
-      const raw = await file.text();
-      const validated = parseDictionaryPackJson(raw);
+      const validated = await readDictionaryPackFile(file);
+      if (contextSeq !== requestSeqRef.current || uploadSeq !== packUploadSeqRef.current) return;
       clearActiveRunForPolicyChange();
       setDictionaryPack(validated);
       setSessionDictionaryPack(validated);
@@ -236,11 +245,13 @@ export function ExtractionWorkspace() {
         `Loaded session-only dictionary pack "${validated.name}" (${validated.entries.length} entries; read-only, never writes library).`,
       );
     } catch (error) {
+      if (contextSeq !== requestSeqRef.current || uploadSeq !== packUploadSeqRef.current) return;
       setPackError(error instanceof Error ? error.message : 'Unable to validate dictionary pack.');
     }
   };
 
   const handleClearDictionaryPack = () => {
+    packUploadSeqRef.current += 1;
     clearActiveRunForPolicyChange();
     setDictionaryPack(null);
     setUsePackAsHints(false);
@@ -262,8 +273,10 @@ export function ExtractionWorkspace() {
     setAnalysisError(null);
     setStatusNotice(null);
     handleSourceTextChange('');
+    const loadSeq = ++requestSeqRef.current;
     try {
       const parsedDoc = await readDocument(file, processingLimits);
+      if (loadSeq !== requestSeqRef.current) return;
       const nextFormat: Exclude<DocumentFormat, 'docx'> =
         parsedDoc.format === 'markdown' ? 'markdown' : 'txt';
       setInputFormat(nextFormat);
@@ -273,6 +286,7 @@ export function ExtractionWorkspace() {
         `Loaded "${file.name}" (${parsedDoc.format}, ${parsedDoc.text.length.toLocaleString('en-US')} UTF-16 chars) into session memory only.`,
       );
     } catch (error) {
+      if (loadSeq !== requestSeqRef.current) return;
       setAnalysisError(error instanceof Error ? error.message : 'Unable to read local document file.');
     }
   };
@@ -331,6 +345,7 @@ export function ExtractionWorkspace() {
         `Analyzed locally (${result.algorithmVersion}, ${parsedDoc.format}) at library revision ${result.libraryRevision}: ${result.occurrences.length} occurrence spans identified (session-only; not persisted).`,
       );
     } catch (error) {
+      if (seq !== requestSeqRef.current) return;
       if (error instanceof DOMException && error.name === 'AbortError') {
         setStatusNotice('In-flight analysis cancelled.');
       } else {
@@ -348,6 +363,7 @@ export function ExtractionWorkspace() {
     abortRef.current = null;
     requestSeqRef.current += 1;
     setAnalyzing(false);
+    setStatusNotice('In-flight analysis cancelled.');
   };
 
   const handleClearSession = () => {
@@ -371,9 +387,10 @@ export function ExtractionWorkspace() {
   }, [run, filter]);
 
   const rankedGroups = useMemo(() => {
-    if (visibleOccurrences.length === 0) return [];
-    return rankCandidates(visibleOccurrences, rankMode);
-  }, [visibleOccurrences, rankMode]);
+    if (!run || run.occurrences.length === 0) return [];
+    // Corpus statistics are based on the full analysis run; the table applies its display filter.
+    return rankCandidates(run.occurrences, rankMode, run.tokens);
+  }, [run, rankMode]);
 
   const counts = useMemo(() => {
     if (!run) {
@@ -410,13 +427,17 @@ export function ExtractionWorkspace() {
     retainMeta: { documentId: string; runId: string; forRunId: string } | null = null,
   ) => {
     if (!snapshot) return;
+    const contextSeq = requestSeqRef.current;
+    const proposalSeq = ++proposalSeqRef.current;
     setAnalysisError(null);
     setStatusNotice(null);
     try {
       const proposal = await proposeChange(snapshot, payload);
+      if (contextSeq !== requestSeqRef.current || proposalSeq !== proposalSeqRef.current) return;
       setPendingProposal(proposal);
       setPendingRetainMeta(retainMeta);
     } catch (error) {
+      if (contextSeq !== requestSeqRef.current || proposalSeq !== proposalSeqRef.current) return;
       setAnalysisError(error instanceof Error ? error.message : 'Unable to prepare change proposal.');
     }
   };

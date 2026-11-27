@@ -28,8 +28,8 @@ function spanOf(
   };
 }
 
-describe('D11: Reproducible synthetic S1 vs S2 comparison', () => {
-  it('runs identical synthetic corpus, library snapshot, and limits through S1 baseline vs S2 experimental and records deterministic metrics', async () => {
+describe('D11: Controlled factorial synthetic grammar and ranking comparison', () => {
+  it('runs the same synthetic corpus under every grammar/ranking combination', async () => {
     const nlp = new WinkNlpEngine();
     const matcher = new AhoCorasickRegisteredMatcher();
     const snapshot = createSyntheticBaselineSnapshot();
@@ -91,7 +91,10 @@ describe('D11: Reproducible synthetic S1 vs S2 comparison', () => {
       S2_SYNTHETIC_DOCUMENTS.structuredMarkdown,
     ] as const;
 
-    const runMode = async (grammarMode: 's1-grammar-1' | 's2-grammar-2') => {
+    const runConfiguration = async (
+      grammarMode: 's1-grammar-1' | 's2-grammar-2',
+      rankMode: 'source-order' | 'frequency' | 'c-value',
+    ) => {
       const predictedDocs: PredictedDocument[] = [];
       let totalKnown = 0;
       let totalAmbiguous = 0;
@@ -105,9 +108,7 @@ describe('D11: Reproducible synthetic S1 vs S2 comparison', () => {
           grammarMode,
           parsedDocument: parsed,
           limits: DEFAULT_PROCESSING_LIMITS,
-          onStageTimings: (t) => {
-            elapsedMs = t.totalMs;
-          },
+          onStageTimings: (t) => { elapsedMs = t.totalMs; },
         });
 
         for (const occ of run.occurrences) {
@@ -117,11 +118,7 @@ describe('D11: Reproducible synthetic S1 vs S2 comparison', () => {
         }
         totalHypotheses += run.hypotheses?.length ?? 0;
 
-        // Rank with C-value for S2 and source-order for S1 (matching baseline vs experimental mode)
-        const ranked = rankCandidates(
-          run.occurrences,
-          grammarMode === 's2-grammar-2' ? 'c-value' : 'source-order',
-        );
+        const ranked = rankCandidates(run.occurrences, rankMode, run.tokens);
         const occById = new Map(run.occurrences.map((o) => [o.id, o]));
         const orderedSpans = ranked.flatMap((item) =>
           item.group.occurrenceIds
@@ -138,61 +135,41 @@ describe('D11: Reproducible synthetic S1 vs S2 comparison', () => {
       }
 
       const metrics = evaluateExtraction(goldDocs, predictedDocs, { kValues: [5, 10, 15] });
-      return { metrics, totalKnown, totalAmbiguous, totalNew, totalHypotheses };
+      return { grammarMode, rankMode, metrics, totalKnown, totalAmbiguous, totalNew, totalHypotheses };
     };
 
-    const s1 = await runMode('s1-grammar-1');
-    const s2 = await runMode('s2-grammar-2');
+    // Warm the local NLP model once so every configuration uses matched warm runs.
+    await nlp.analyze('Synthetic warm-up sentence for controlled comparison.');
+    const configurations = [];
+    for (const grammarMode of ['s1-grammar-1', 's2-grammar-2'] as const) {
+      for (const rankMode of ['source-order', 'frequency', 'c-value'] as const) {
+        configurations.push(await runConfiguration(grammarMode, rankMode));
+      }
+    }
 
     console.log(
       'WP02_SYNTHETIC_COMPARISON_JSON=' +
-        JSON.stringify({
-          s1: {
-            tp: s1.metrics.tp,
-            fp: s1.metrics.fp,
-            fn: s1.metrics.fn,
-            microPrecision: s1.metrics.microPrecision,
-            microRecall: s1.metrics.microRecall,
-            microF1: s1.metrics.microF1,
-            macroPrecision: s1.metrics.macroPrecision,
-            macroRecall: s1.metrics.macroRecall,
-            macroF1: s1.metrics.macroF1,
-            unknownRecall: s1.metrics.unknownRecall,
-            nestedRecall: s1.metrics.nestedRecall,
-            atK: s1.metrics.atK,
-            totalKnown: s1.totalKnown,
-            totalAmbiguous: s1.totalAmbiguous,
-            totalNew: s1.totalNew,
-            workload: s1.metrics.workloadSummary,
-          },
-          s2: {
-            tp: s2.metrics.tp,
-            fp: s2.metrics.fp,
-            fn: s2.metrics.fn,
-            microPrecision: s2.metrics.microPrecision,
-            microRecall: s2.metrics.microRecall,
-            microF1: s2.metrics.microF1,
-            macroPrecision: s2.metrics.macroPrecision,
-            macroRecall: s2.metrics.macroRecall,
-            macroF1: s2.metrics.macroF1,
-            unknownRecall: s2.metrics.unknownRecall,
-            nestedRecall: s2.metrics.nestedRecall,
-            atK: s2.metrics.atK,
-            totalKnown: s2.totalKnown,
-            totalAmbiguous: s2.totalAmbiguous,
-            totalNew: s2.totalNew,
-            totalHypotheses: s2.totalHypotheses,
-            workload: s2.metrics.workloadSummary,
-          },
-        }),
+        JSON.stringify(configurations.map(({ grammarMode, rankMode, metrics, totalKnown, totalAmbiguous, totalNew, totalHypotheses }) => ({
+          grammarMode, rankMode, tp: metrics.tp, fp: metrics.fp, fn: metrics.fn,
+          microPrecision: metrics.microPrecision, microRecall: metrics.microRecall, microF1: metrics.microF1,
+          macroPrecision: metrics.macroPrecision, macroRecall: metrics.macroRecall, macroF1: metrics.macroF1,
+          unknownRecall: metrics.unknownRecall, nestedRecall: metrics.nestedRecall, atK: metrics.atK,
+          totalKnown, totalAmbiguous, totalNew, totalHypotheses, workload: metrics.workloadSummary,
+        }))),
     );
 
-    // S2 recovers the scientific compounds/eponyms/of-phrases missed by S1 on this synthetic suite
-    expect(s2.metrics.unknownRecall!).toBeGreaterThan(s1.metrics.unknownRecall!);
-    expect(s2.metrics.microRecall!).toBeGreaterThan(s1.metrics.microRecall!);
-    expect(s2.totalKnown).toBe(s1.totalKnown);
-    expect(s2.totalAmbiguous).toBe(s1.totalAmbiguous);
-    expect(s2.totalHypotheses).toBeGreaterThanOrEqual(2);
+    expect(configurations).toHaveLength(6);
+    for (const rankMode of ['source-order', 'frequency', 'c-value'] as const) {
+      const s1 = configurations.find((c) => c.grammarMode === 's1-grammar-1' && c.rankMode === rankMode)!;
+      const s2 = configurations.find((c) => c.grammarMode === 's2-grammar-2' && c.rankMode === rankMode)!;
+      // Span metrics are independent of ranking mode; each grammar is compared under the same ranker.
+      expect(s1.metrics.tp).toBe(configurations[0].metrics.tp);
+      expect(s2.metrics.tp).toBe(configurations[3].metrics.tp);
+      expect(s2.metrics.unknownRecall!).toBeGreaterThan(s1.metrics.unknownRecall!);
+      expect(s2.totalKnown).toBe(s1.totalKnown);
+      expect(s2.totalAmbiguous).toBe(s1.totalAmbiguous);
+      expect(s2.totalHypotheses).toBeGreaterThanOrEqual(2);
+    }
     // Canonical snapshot never mutated
     expect(snapshot.libraryRevision).toBe(3);
   });

@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { parseMarkdownDocument } from '@/adapters/documents/markdown';
+import { analyzeText } from '@/application/extraction';
 import { readDocument } from '@/application/document-input';
 import {
   isSpanEligibleInDocument,
   MARKDOWN_PARSER_VERSION,
   TXT_PARSER_VERSION,
+  validateParsedDocument,
 } from '@/domain/document-input';
 import { DEFAULT_PROCESSING_LIMITS } from '@/domain/processing-limits';
+import { createEmptySnapshot } from '@/domain/schema';
 import { S2_SYNTHETIC_DOCUMENTS } from '../fixtures/s2/synthetic-documents';
 
 function makeFakeFile(name: string, content: string | Uint8Array) {
@@ -98,6 +101,18 @@ describe('D2: Structured Markdown and document representation', () => {
     expect(isSpanEligibleInDocument(cd4Index, cd4Index + 4, parsed)).toBe(false);
   });
 
+  it('preserves exact Markdown coordinates across CRLF, bare CR, and LF line endings', () => {
+    const source = '# TNF-α\r\n\rPeriodontal ligament\n- Gram staining';
+    const parsed = parseMarkdownDocument(source);
+    expect(parsed.text).toBe(source);
+    expect(parsed.sections.map((section) => section.kind)).toEqual(['heading', 'paragraph', 'list']);
+    for (const term of ['TNF-α', 'Periodontal ligament', 'Gram staining']) {
+      const start = source.indexOf(term);
+      expect(parsed.text.slice(start, start + term.length)).toBe(term);
+      expect(isSpanEligibleInDocument(start, start + term.length, parsed)).toBe(true);
+    }
+  });
+
   it('reads TXT and Markdown files via readDocument with fatal UTF-8 check, byte limits, and AbortSignal', async () => {
     const txtFile = makeFakeFile('sample.txt', 'Periodontal ligament stem cells express TNF-α.');
     const txtDoc = await readDocument(txtFile, DEFAULT_PROCESSING_LIMITS);
@@ -131,5 +146,25 @@ describe('D2: Structured Markdown and document representation', () => {
     // Unqualified DOCX rejected explicitly (D3 gate)
     const fakeDocx = makeFakeFile('paper.docx', new Uint8Array([0x50, 0x4b, 0x03, 0x04]));
     await expect(readDocument(fakeDocx, DEFAULT_PROCESSING_LIMITS)).rejects.toThrow(/DOCX|not enabled|qualified/i);
+  });
+
+  it('rejects inconsistent coordinate metadata and mismatched analyzed text before extraction', async () => {
+    const parsed = parseMarkdownDocument('TNF-α and CD4+.');
+    const malformed = {
+      ...parsed,
+      excludedRanges: [
+        { start: 8, end: 10, reason: 'inline-code' as const },
+        { start: 0, end: 2, reason: 'link-destination' as const },
+      ],
+    };
+    expect(() => validateParsedDocument(malformed)).toThrow(/out of order|overlaps/i);
+
+    await expect(
+      analyzeText('different coordinate text', createEmptySnapshot(), {
+        async analyze() { return []; },
+      }, {
+        async match() { return []; },
+      }, { parsedDocument: parsed }),
+    ).rejects.toThrow(/must exactly match/i);
   });
 });

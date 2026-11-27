@@ -51,6 +51,7 @@ test.describe('WP02 D11: Integrated synthetic Markdown -> S2 review -> approve -
     await freshPage.goto('/exchange');
     await freshPage.locator('#backup-file-input').setInputFiles(backupPath!);
     await freshPage.getByRole('button', { name: 'Confirm atomic restore' }).click();
+    await expect(freshPage.locator('main').getByRole('status')).toContainText(/Restored validated backup atomically/i);
     await freshPage.goto('/library');
     await expect(freshPage.locator('main')).toContainText('Na+/K+-ATPase');
     await freshContext.close();

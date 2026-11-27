@@ -68,6 +68,8 @@ export interface ExtractionRun {
   algorithmVersion: string;
   libraryRevision: number;
   occurrences: Occurrence[];
+  /** Session-only NLP tokens used for explicit ranking tokenization. Never persisted. */
+  tokens?: readonly Token[];
   /** Session-only explainable candidate evidence keyed by "start:end". Never persisted. */
   evidenceBySpan?: ReadonlyMap<string, CandidateEvidence>;
   /** Session-only bounded acronym–long-form hypotheses. Never persisted or auto-merged. */
