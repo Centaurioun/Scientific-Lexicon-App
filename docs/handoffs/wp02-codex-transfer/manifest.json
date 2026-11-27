@@ -1,0 +1,163 @@
+{
+  "format": "termforge-pinned-source-transfer-v1",
+  "baseCommit": "2e4a5894e92f3439330aa019d337ac04a08b794f",
+  "sourceCommit": "a935c186f27e829d42f5370b3840391e8fe64ed4",
+  "verifiedImplementation": "6b8736b6186fc4f5d7e78197188f1139ad0d095e",
+  "note": "Exact Git blobs; transfer checkpoint only, NOT QUALIFIED. Source files are inert .txt copies until explicitly applied in AI Studio.",
+  "files": [
+    {
+      "path": "docs/evaluation/WP02-ACCEPTANCE.md",
+      "copy": "docs/handoffs/wp02-codex-transfer/docs/evaluation/WP02-ACCEPTANCE.md.txt",
+      "baseBlob": "fdb6bec7e408938c2e5761f662d95d6579b188cf",
+      "targetBlob": "256ca05469e9e11a9c2e1ee3f4c22964200092db",
+      "bytes": 4686
+    },
+    {
+      "path": "docs/evaluation/WP02-INDEPENDENT-QUALIFICATION.md",
+      "copy": "docs/handoffs/wp02-codex-transfer/docs/evaluation/WP02-INDEPENDENT-QUALIFICATION.md.txt",
+      "baseBlob": null,
+      "targetBlob": "a3c76b8da84979094c8aa5cb4fe6a962d2980185",
+      "bytes": 14835
+    },
+    {
+      "path": "docs/evaluation/WP02-SYNTHETIC-COMPARISON.md",
+      "copy": "docs/handoffs/wp02-codex-transfer/docs/evaluation/WP02-SYNTHETIC-COMPARISON.md.txt",
+      "baseBlob": "344e75616a0e0d4ddd2e85593db83fbae378a94d",
+      "targetBlob": "f7511e4c55915a842e0f82c7250854c14afe8813",
+      "bytes": 7330
+    },
+    {
+      "path": "docs/handoffs/WP02-IMPLEMENTATION-LEDGER.md",
+      "copy": "docs/handoffs/wp02-codex-transfer/docs/handoffs/WP02-IMPLEMENTATION-LEDGER.md.txt",
+      "baseBlob": "ea19679b7699487fb34947018ee0542155afeb97",
+      "targetBlob": "838c85a2fd3ce6d60cdbf8602839008691db1983",
+      "bytes": 13572
+    },
+    {
+      "path": "next-env.d.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/next-env.d.ts.txt",
+      "baseBlob": "ce4e94a6b10f160ee021fe18939af160d2927dcf",
+      "targetBlob": "a419cbe4e3a5e8d4b481b851dbf4ac767de069e6",
+      "bytes": 296
+    },
+    {
+      "path": "src/adapters/documents/markdown.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/src/adapters/documents/markdown.ts.txt",
+      "baseBlob": "1c432137ca292bd9748a2877f79221f8b17740ad",
+      "targetBlob": "9c45eab04bfa38976caa1c3fca8cecea5422d716",
+      "bytes": 10385
+    },
+    {
+      "path": "src/application/dictionary-lookup.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/src/application/dictionary-lookup.ts.txt",
+      "baseBlob": "67573e143d795a0319bca89479fa95a7f01c0caf",
+      "targetBlob": "7eaa7577ed10e95c83300ff705977e096e320eb3",
+      "bytes": 5002
+    },
+    {
+      "path": "src/application/dictionary-pack-file.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/src/application/dictionary-pack-file.ts.txt",
+      "baseBlob": null,
+      "targetBlob": "10e7a2e112f9dd6e79dcd8916e60f0454bcb7fb2",
+      "bytes": 1119
+    },
+    {
+      "path": "src/application/evaluation.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/src/application/evaluation.ts.txt",
+      "baseBlob": "9ba56cb08a1441f615f202af9f536898f21975b8",
+      "targetBlob": "70d792f0f7e3eff4d1a2089008db7cb3984e50e0",
+      "bytes": 12111
+    },
+    {
+      "path": "src/application/extraction.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/src/application/extraction.ts.txt",
+      "baseBlob": "8a85c9e093ea4f46fb7cd005127a0d0180589713",
+      "targetBlob": "aa22de1ecce8a56a1dc87bd83204fc9469382b1a",
+      "bytes": 14059
+    },
+    {
+      "path": "src/application/ranking.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/src/application/ranking.ts.txt",
+      "baseBlob": "2ddb2b0d100612126b5f702bdf53a8da7417be62",
+      "targetBlob": "42d04c439b8e22199bd10e33745f7b72262ece73",
+      "bytes": 11263
+    },
+    {
+      "path": "src/domain/dictionary-pack.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/src/domain/dictionary-pack.ts.txt",
+      "baseBlob": "22a190d98b8d445722a9e95ac26fccfb5224c79d",
+      "targetBlob": "d626b492ea861cdbf962820effce61e3374d414b",
+      "bytes": 3218
+    },
+    {
+      "path": "src/domain/document-input.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/src/domain/document-input.ts.txt",
+      "baseBlob": "a4cae143077314f03e782038b005577aaa13cb24",
+      "targetBlob": "e667d2df794d5ae36ce8477ea78f8c0af10dc945",
+      "bytes": 4428
+    },
+    {
+      "path": "src/domain/extraction.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/src/domain/extraction.ts.txt",
+      "baseBlob": "fcd10fbeea8f5c0b47d964ef9ff72428e201f8af",
+      "targetBlob": "ea96ffa245dadcac873122b229e89e310cfa5dee",
+      "bytes": 5345
+    },
+    {
+      "path": "src/features/extraction/ExtractionWorkspace.tsx",
+      "copy": "docs/handoffs/wp02-codex-transfer/src/features/extraction/ExtractionWorkspace.tsx.txt",
+      "baseBlob": "1d6f78a0f70137a89545e523670c1264c4dc9972",
+      "targetBlob": "1c40043b5fbca502b462d5eb547c3200b7e2b081",
+      "bytes": 38494
+    },
+    {
+      "path": "tests/e2e/s2-async-races.spec.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/tests/e2e/s2-async-races.spec.ts.txt",
+      "baseBlob": null,
+      "targetBlob": "384a8036cef4b4fe0e00e27a08db0d26a5da807f",
+      "bytes": 2884
+    },
+    {
+      "path": "tests/e2e/s2-integrated.spec.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/tests/e2e/s2-integrated.spec.ts.txt",
+      "baseBlob": "d68165207d8bbbb1282b5b44c719cb1f9994e804",
+      "targetBlob": "52295e4a8dfb347f7941bf13519d90aedc1c4c4b",
+      "bytes": 2946
+    },
+    {
+      "path": "tests/unit/dictionary-pack.test.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/tests/unit/dictionary-pack.test.ts.txt",
+      "baseBlob": "be3a0d2d6630624a7b7f0309c58460eb3353e9e3",
+      "targetBlob": "2e076d1701feed5fcc07ec17093d6347dae5d166",
+      "bytes": 8482
+    },
+    {
+      "path": "tests/unit/document-input.test.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/tests/unit/document-input.test.ts.txt",
+      "baseBlob": "274f30d1230d81e0912e060665886df709a2c128",
+      "targetBlob": "6021943fb3794c9eac4fc583c0454a16adc4f3d1",
+      "bytes": 8400
+    },
+    {
+      "path": "tests/unit/evaluation.test.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/tests/unit/evaluation.test.ts.txt",
+      "baseBlob": "0fdb39e84f5a0d45f5c45da01f804e3bb1aea5ef",
+      "targetBlob": "f2c4f6feb75efeab42ec3678bca10db35f471546",
+      "bytes": 6958
+    },
+    {
+      "path": "tests/unit/ranking.test.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/tests/unit/ranking.test.ts.txt",
+      "baseBlob": "2b94bbf6a4c4928535751f8d1be9d366c659d35e",
+      "targetBlob": "30900f5fcbfeb82614290610e1257ac2a0c6d02c",
+      "bytes": 10706
+    },
+    {
+      "path": "tests/unit/s2-comparison.test.ts",
+      "copy": "docs/handoffs/wp02-codex-transfer/tests/unit/s2-comparison.test.ts.txt",
+      "baseBlob": "4de20fbfd6bf73d62a33ab93b2ef3affbdfe5007",
+      "targetBlob": "504e517a82b5503faf9562187fda78510b2d9056",
+      "bytes": 8822
+    }
+  ]
+}
