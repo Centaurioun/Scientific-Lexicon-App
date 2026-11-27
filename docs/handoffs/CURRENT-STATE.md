@@ -37,3 +37,6 @@ Owner requested relevant Superpowers and Six-Cycle refinement for this and futur
 
 ## Latest authoritative state — v1.0 APPROVED, plans prepared
 Owner explicitly approved rc2 at 88fa4acfd2a12ef4daae925c97fdddf8a8d4faae on 2026-11-26. Read [approved v1.0](../architecture/MASTER-DESIGN-BASELINE-v1.0.md), [approval record](../decisions/MASTER-DESIGN-APPROVAL.md), [plan index](../superpowers/plans/README.md), [S1 contracts](../specifications/S1-IMPLEMENTATION-CONTRACTS-v0.1.md), [plan review](../evaluation/S1-WRITING-PLANS-REVIEW.md), and [S0 handoff](../implementation-plans/AI-STUDIO-S0-EXECUTION-HANDOFF.md). Next: owner reviews plans and authorizes S0; Codex G1 selected-only preflight, AI Studio disposable G2 probe, then verified S1a–c. No implementation, no real data, no merge. All earlier next steps are historical. Main and Codex qualification branches remain unchanged.
+
+## Superseding current application handoff — 2026-11-27
+Historical research-era entries above are preserved, not active tasks. WP01 integrated into private Scientific-Lexicon-App main at 09a505b12db12b5830921120020d3084fe080e8c (G3 synthetic PASS). Read [current conversation handoff](CHATGPT-CONTINUATION-2026-11-27.md) and [WP02 execution plan](../WP02_SCIENTIFIC_INTELLIGENCE.md). G4 NOT READY; G5 NOT ESTABLISHED. Existing AI Studio app, manual pull and WP02 short prompt next.

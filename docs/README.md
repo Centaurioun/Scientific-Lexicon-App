@@ -20,3 +20,6 @@
 - [Engineering Decision Workflow](decisions/ENGINEERING-DECISION-WORKFLOW.md)
 
 The linked baseline, contract, plans and workflow are copied verbatim from the approved source snapshot. The WP01 file combines the three plans into one sequential handoff while preserving all task acceptance criteria and execution order.
+
+## Current checkpoint — WP02
+WP01 G3 synthetic PASS integrated at `09a505b12db12b5830921120020d3084fe080e8c`. [WP01 independent qualification](evaluation/WP01-INDEPENDENT-QUALIFICATION.md). Next [WP02 Scientific Intelligence execution plan](WP02_SCIENTIFIC_INTELLIGENCE.md), [design and six-cycle decision](superpowers/specs/2026-11-27-wp02-scientific-intelligence-design.md), [current ChatGPT continuation](handoffs/CHATGPT-CONTINUATION-2026-11-27.md). G4 NOT READY; G5 NOT ESTABLISHED. Owner manually pulls and sends task; no WP02 implementation in this documentation commit.
