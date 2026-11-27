@@ -16,6 +16,8 @@ import {
 import { approveRestore, restoreEmptyLibrary } from '@/application/library';
 import type { LibrarySnapshot } from '@/domain/schema';
 
+const MAX_BACKUP_FILE_MIB = (MAX_BACKUP_FILE_BYTES / (1024 * 1024)).toFixed(0);
+
 interface BackupPanelProps {
   snapshot: LibrarySnapshot | null;
   disabled: boolean;
@@ -203,6 +205,10 @@ export function BackupPanel({ snapshot, disabled, onRestored }: BackupPanelProps
       {/* Generate Backup */}
       <div className="stack-sm">
         <h3>1. Create complete portable backup</h3>
+        <p className="muted small" style={{ margin: 0 }}>
+          Recoverable backups are limited to {MAX_BACKUP_FILE_MIB} MiB. Larger libraries cannot be offered as a backup;
+          the file is never truncated.
+        </p>
         {backupError && (
           <div className="banner banner-error" role="alert">
             {backupError}
@@ -240,6 +246,9 @@ export function BackupPanel({ snapshot, disabled, onRestored }: BackupPanelProps
         <p className="muted small" style={{ margin: 0 }}>
           Restore is permitted <strong>only</strong> into a genuinely empty target library (Rev 0
           with zero records across all stores). Existing library data is never silently overwritten.
+        </p>
+        <p className="muted small" style={{ margin: 0 }}>
+          Selected backup file must be {MAX_BACKUP_FILE_MIB} MiB or smaller. Oversized files are rejected before they are read.
         </p>
 
         {!targetIsEmpty && snapshot && (

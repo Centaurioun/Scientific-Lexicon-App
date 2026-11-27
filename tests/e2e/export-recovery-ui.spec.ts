@@ -42,6 +42,8 @@ test.describe('C4: Export and recovery workspace', () => {
     await page.getByRole('link', { name: 'Export & Recovery', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Export & Recovery Workspace' })).toBeVisible();
     await expect(page.getByText(/Browser storage is not a permanent backup/i)).toBeVisible();
+    await expect(page.getByText(/recoverable backups are limited to 16 MiB/i)).toBeVisible();
+    await expect(page.getByText(/selected backup file must be 16 MiB or smaller/i)).toBeVisible();
 
     // CSV download check (formula safety + comma quoting)
     const csvDownloadPromise = page.waitForEvent('download');

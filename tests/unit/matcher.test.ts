@@ -5,6 +5,7 @@ import {
   SimpleOracleRegisteredMatcher,
 } from '@/adapters/matching/registered-matcher';
 import type { Expression } from '@/domain/schema';
+import { OccurrenceLimitExceededError, OccurrenceLimitTracker } from '@/domain/processing-limits';
 
 const TS = '2026-11-26T12:00:00.000Z';
 
@@ -126,5 +127,44 @@ describe('scientific registered term matcher (B1)', () => {
       expr('tnfa', 'c2', 'TNF-α'),
     ]);
     expect(rev2.map((m) => m.surface)).toEqual(['IL-1', 'TNF-α']);
+  });
+
+  it('counts a same-span ambiguity group once and rejects the first additional distinct match', async () => {
+    const tracker = new OccurrenceLimitTracker(1);
+    const ambiguous = await aho.match('PD', expressions.filter((item) => item.text === 'PD'), { occurrenceTracker: tracker });
+    expect(ambiguous).toHaveLength(1);
+    expect(ambiguous[0].state).toBe('ambiguous');
+    expect(tracker.count).toBe(1);
+
+    const nextTracker = new OccurrenceLimitTracker(1);
+    await expect(aho.match('IL-1 IL-11', expressions, { occurrenceTracker: nextTracker })).rejects.toBeInstanceOf(
+      OccurrenceLimitExceededError,
+    );
+    expect(nextTracker.count).toBe(1);
+  });
+
+  it('counts legitimate nested registered spans separately within the occurrence budget', async () => {
+    const tracker = new OccurrenceLimitTracker(2);
+    const nested = await aho.match(
+      'periodontal ligament stem cells',
+      expressions.filter((item) => item.id === 'pdl' || item.id === 'pdlsc'),
+      { occurrenceTracker: tracker },
+    );
+    expect(nested.map((item) => item.surface)).toEqual([
+      'periodontal ligament stem cells',
+      'periodontal ligament',
+    ]);
+    expect(tracker.count).toBe(2);
+  });
+
+  it('cancels a long registered scan between bounded chunks', async () => {
+    const controller = new AbortController();
+    const text = 'nothing '.repeat(25_000);
+    const pending = aho.match(text, expressions, {
+      occurrenceTracker: new OccurrenceLimitTracker(100),
+      signal: controller.signal,
+    });
+    setTimeout(() => controller.abort(), 0);
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

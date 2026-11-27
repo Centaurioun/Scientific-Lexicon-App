@@ -6,6 +6,7 @@ import {
   makeOccurrenceId,
   MATCH_BOUNDARY_POLICY,
   type CandidateFilter,
+  type CandidateGenerationOptions,
   type CandidateGenerator,
   type CanonicalPos,
   type ExtractionRun,
@@ -15,9 +16,17 @@ import {
   type Token,
 } from '@/domain/extraction';
 import type { LibrarySnapshot, Occurrence } from '@/domain/schema';
+import {
+  DEFAULT_PROCESSING_LIMITS,
+  MAX_TEXT_UTF16_CODE_UNITS,
+  MAX_TXT_INPUT_BYTES,
+  OccurrenceLimitTracker,
+  parseProcessingLimits,
+  type ProcessingLimits,
+} from '@/domain/processing-limits';
 
-export const MAX_TXT_FILE_BYTES = 2 * 1024 * 1024; // 2 MiB
-export const MAX_TEXT_UTF16_LENGTH = 200_000; // 200k UTF-16 code units
+export const MAX_TXT_FILE_BYTES = MAX_TXT_INPUT_BYTES;
+export const MAX_TEXT_UTF16_LENGTH = MAX_TEXT_UTF16_CODE_UNITS;
 export const EXTRACTION_ALGORITHM_VERSION = `${CANDIDATE_GRAMMAR_VERSION}+${MATCH_BOUNDARY_POLICY}`;
 
 const START_POS = new Set<CanonicalPos>(['ADJ', 'NOUN', 'PROPN']);
@@ -40,13 +49,17 @@ export class InputLimitError extends Error {
   }
 }
 
-export function validateInputText(text: string): void {
+export function validateInputText(
+  text: string,
+  inputLimits: ProcessingLimits = DEFAULT_PROCESSING_LIMITS,
+): void {
+  const limits = parseProcessingLimits(inputLimits);
   if (typeof text !== 'string' || text.trim().length === 0) {
     throw new InputLimitError('Input text must not be empty or whitespace-only.');
   }
-  if (text.length > MAX_TEXT_UTF16_LENGTH) {
+  if (text.length > limits.maxTextUtf16CodeUnits) {
     throw new InputLimitError(
-      `Input text exceeds the ${MAX_TEXT_UTF16_LENGTH.toLocaleString('en-US')} UTF-16 character limit (${text.length.toLocaleString('en-US')} provided). Input is rejected rather than truncated.`,
+      `Input text exceeds the ${limits.maxTextUtf16CodeUnits.toLocaleString('en-US')} UTF-16 character limit (${text.length.toLocaleString('en-US')} provided). Input is rejected rather than truncated.`,
     );
   }
 }
@@ -62,8 +75,15 @@ function isQualifiedScientificSymbol(surface: string): boolean {
 }
 
 export class S1CandidateGenerator implements CandidateGenerator {
-  async generate(text: string, tokens: readonly Token[], signal?: AbortSignal): Promise<Span[]> {
-    throwIfAborted(signal);
+  async generate(
+    text: string,
+    tokens: readonly Token[],
+    options: CandidateGenerationOptions = {},
+  ): Promise<Span[]> {
+    const tracker = options.occurrenceTracker ?? new OccurrenceLimitTracker(
+      DEFAULT_PROCESSING_LIMITS.maxCandidateOccurrences,
+    );
+    throwIfAborted(options.signal);
     const bySpan = new Map<string, Span>();
 
     const addSpan = (start: number, end: number) => {
@@ -72,6 +92,7 @@ export class S1CandidateGenerator implements CandidateGenerator {
       if (surface.trim().length === 0 || !HAS_LETTER_RE.test(surface)) return;
       const key = `${start}:${end}`;
       if (!bySpan.has(key)) {
+        tracker.add(start, end);
         bySpan.set(key, { start, end, surface });
       }
     };
@@ -89,7 +110,7 @@ export class S1CandidateGenerator implements CandidateGenerator {
       if (processedSinceYield >= GENERATION_YIELD_INTERVAL) {
         processedSinceYield = 0;
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
-        throwIfAborted(signal);
+        throwIfAborted(options.signal);
       }
     };
 
@@ -148,7 +169,7 @@ export class S1CandidateGenerator implements CandidateGenerator {
       }
     }
 
-    throwIfAborted(signal);
+    throwIfAborted(options.signal);
     return Array.from(bySpan.values()).sort(compareSpans);
   }
 }
@@ -156,6 +177,7 @@ export class S1CandidateGenerator implements CandidateGenerator {
 export interface AnalyzeTextOptions {
   signal?: AbortSignal;
   candidateGenerator?: CandidateGenerator;
+  limits?: ProcessingLimits;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -172,20 +194,31 @@ export async function analyzeText(
   options: AnalyzeTextOptions = {},
 ): Promise<ExtractionRun> {
   throwIfAborted(options.signal);
-  validateInputText(text);
+  const limits = parseProcessingLimits(options.limits ?? DEFAULT_PROCESSING_LIMITS);
+  validateInputText(text, limits);
+  const occurrenceTracker = new OccurrenceLimitTracker(limits.maxCandidateOccurrences);
 
   const generator = options.candidateGenerator ?? new S1CandidateGenerator();
 
   const matchPromise =
     matcher instanceof RevisionCachedRegisteredMatcher
-      ? matcher.matchForRevision(snapshot.libraryRevision, text, snapshot.expressions)
-      : matcher.match(text, snapshot.expressions);
+      ? matcher.matchForRevision(snapshot.libraryRevision, text, snapshot.expressions, {
+          occurrenceTracker,
+          signal: options.signal,
+        })
+      : matcher.match(text, snapshot.expressions, { occurrenceTracker, signal: options.signal });
 
-  const [knownOccurrences, tokens] = await Promise.all([matchPromise, nlp.analyze(text)]);
-
+  // Enforce the registered-span portion before tokenization allocates a token
+  // array; a match-limit failure therefore short-circuits NLP for this run.
+  const knownOccurrences = await matchPromise;
+  throwIfAborted(options.signal);
+  const tokens = await nlp.analyze(text);
   throwIfAborted(options.signal);
 
-  const candidateSpans = await generator.generate(text, tokens, options.signal);
+  const candidateSpans = await generator.generate(text, tokens, {
+    occurrenceTracker,
+    signal: options.signal,
+  });
   throwIfAborted(options.signal);
 
   const bySpan = new Map<string, Occurrence>();

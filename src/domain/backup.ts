@@ -7,10 +7,11 @@ import {
   UtcIsoTimestampSchema,
   type LibrarySnapshot,
 } from './schema';
+import { MAX_BACKUP_FILE_BYTES } from './processing-limits';
 
 export const BACKUP_FORMAT = 'termforge-backup' as const;
 export const BACKUP_VERSION = 1 as const;
-export const MAX_BACKUP_FILE_BYTES = 16 * 1024 * 1024; // 16 MiB bounded backup parse limit
+export { MAX_BACKUP_FILE_BYTES } from './processing-limits';
 
 export const BackupEnvelopeSchema = z
   .object({

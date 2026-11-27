@@ -1,9 +1,12 @@
 import {
   InputLimitError,
-  MAX_TEXT_UTF16_LENGTH,
-  MAX_TXT_FILE_BYTES,
   validateInputText,
 } from '@/application/extraction';
+import {
+  DEFAULT_PROCESSING_LIMITS,
+  parseProcessingLimits,
+  type ProcessingLimits,
+} from '@/domain/processing-limits';
 
 export interface ReadableTxtFile {
   name?: string;
@@ -13,23 +16,27 @@ export interface ReadableTxtFile {
 
 /**
  * Strictly reads a UTF-8 TXT file locally in the browser.
- * Enforces 2 MiB raw file limit, fatal UTF-8 decoding, and 200k UTF-16 code-unit limit.
+ * Enforces configured byte and UTF-16 limits within authorized hard ceilings, with fatal UTF-8 decoding.
  * Never silently truncates invalid or oversized input.
  */
-export async function readTxt(file: ReadableTxtFile): Promise<string> {
+export async function readTxt(
+  file: ReadableTxtFile,
+  limits: ProcessingLimits = DEFAULT_PROCESSING_LIMITS,
+): Promise<string> {
+  limits = parseProcessingLimits(limits);
   if (file.size === 0) {
     throw new InputLimitError('Selected TXT file is empty.');
   }
-  if (file.size > MAX_TXT_FILE_BYTES) {
+  if (file.size > limits.maxTxtInputBytes) {
     throw new InputLimitError(
-      `File exceeds the 2 MiB size limit (${file.size.toLocaleString('en-US')} bytes). File rejected without truncation.`,
+      `File exceeds the ${limits.maxTxtInputBytes.toLocaleString('en-US')} byte size limit (${file.size.toLocaleString('en-US')} bytes). File rejected without truncation.`,
     );
   }
 
   const buffer = await file.arrayBuffer();
-  if (buffer.byteLength > MAX_TXT_FILE_BYTES) {
+  if (buffer.byteLength > limits.maxTxtInputBytes) {
     throw new InputLimitError(
-      `File content exceeds the 2 MiB size limit (${buffer.byteLength.toLocaleString('en-US')} bytes). File rejected without truncation.`,
+      `File content exceeds the ${limits.maxTxtInputBytes.toLocaleString('en-US')} byte size limit (${buffer.byteLength.toLocaleString('en-US')} bytes). File rejected without truncation.`,
     );
   }
 
@@ -48,12 +55,12 @@ export async function readTxt(file: ReadableTxtFile): Promise<string> {
     decoded = decoded.slice(1);
   }
 
-  if (decoded.length > MAX_TEXT_UTF16_LENGTH) {
+  if (decoded.length > limits.maxTextUtf16CodeUnits) {
     throw new InputLimitError(
-      `Decoded text exceeds the ${MAX_TEXT_UTF16_LENGTH.toLocaleString('en-US')} UTF-16 character limit.`,
+      `Decoded text exceeds the ${limits.maxTextUtf16CodeUnits.toLocaleString('en-US')} UTF-16 character limit.`,
     );
   }
 
-  validateInputText(decoded);
+  validateInputText(decoded, limits);
   return decoded;
 }

@@ -6,10 +6,16 @@ import {
   MAX_TXT_FILE_BYTES,
   S1CandidateGenerator,
   selectCandidates,
+  validateInputText,
 } from '@/application/extraction';
 import type { NlpEngine, Token } from '@/domain/extraction';
 import { createEmptySnapshot, type LibrarySnapshot } from '@/domain/schema';
 import { readTxt } from '@/features/extraction/read-text';
+import {
+  DEFAULT_PROCESSING_LIMITS,
+  OccurrenceLimitExceededError,
+  OccurrenceLimitTracker,
+} from '@/domain/processing-limits';
 
 const TS = '2026-11-26T12:00:00.000Z';
 
@@ -110,31 +116,27 @@ describe('unknown scientific candidate discovery and unified extraction run (B3)
     }
   });
 
-  it('preserves candidate output across many repeated scientific-symbol spans', async () => {
-    const termCount = 40_000;
-    const text = Array.from({ length: termCount }, () => 'CD4+').join(' ');
-    const tokens: Token[] = Array.from({ length: termCount }, (_, index) => {
-      const start = index * 5;
-      return { start, end: start + 4, surface: 'CD4+', pos: 'NOUN', sentenceId: 0 };
-    });
-    const started = performance.now();
-    const actual = await new S1CandidateGenerator().generate(text, tokens);
-    const elapsedMs = performance.now() - started;
-
-    const expected: Array<{ start: number; end: number; surface: string }> = [];
-    for (let i = 0; i < tokens.length; i += 1) {
-      for (let j = i; j < Math.min(tokens.length, i + 8); j += 1) {
-        const start = tokens[i].start;
-        const end = tokens[j].end;
-        expected.push({ start, end, surface: text.slice(start, end) });
-      }
+  it('measures bounded generation at the minimum, default, and hard candidate limits', async () => {
+    const measurements: Array<{ limit: number; elapsedMs: number }> = [];
+    for (const limit of [100, 5_000, 10_000]) {
+      const text = 'CD4+. '.repeat(limit);
+      const tokens: Token[] = Array.from({ length: limit }, (_, index) => ({
+        start: index * 6,
+        end: index * 6 + 4,
+        surface: 'CD4+',
+        pos: 'NOUN',
+        sentenceId: index,
+      }));
+      const started = performance.now();
+      const actual = await new S1CandidateGenerator().generate(text, tokens, {
+        occurrenceTracker: new OccurrenceLimitTracker(limit),
+      });
+      measurements.push({ limit, elapsedMs: performance.now() - started });
+      expect(actual).toHaveLength(limit);
+      expect(actual[0].surface).toBe('CD4+');
+      expect(actual.at(-1)?.surface).toBe('CD4+');
     }
-    expected.sort(
-      (left, right) => left.start - right.start || right.end - left.end,
-    );
-    console.info(`Synthetic candidate generation: ${termCount} repeated symbols in ${elapsedMs.toFixed(2)} ms`);
-    expect(actual).toHaveLength(319_972);
-    expect(actual).toEqual(expected);
+    console.info(`Synthetic candidate generation by configured limit: ${JSON.stringify(measurements)}`);
   });
 
   it('yields during candidate generation so cancellation can stop remaining work', async () => {
@@ -145,16 +147,149 @@ describe('unknown scientific candidate discovery and unified extraction run (B3)
       return { start, end: start + 4, surface: 'CD4+', pos: 'NOUN', sentenceId: 0 };
     });
     const controller = new AbortController();
-    const generate = new S1CandidateGenerator().generate.bind(new S1CandidateGenerator()) as unknown as (
-      source: string,
-      sourceTokens: readonly Token[],
-      signal: AbortSignal,
-    ) => Promise<unknown>;
-    const pending = generate(text, tokens, controller.signal);
+    const pending = new S1CandidateGenerator().generate(text, tokens, { signal: controller.signal });
     setTimeout(() => controller.abort(), 0);
 
     expect(pending).toBeInstanceOf(Promise);
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
+  it('rejects below, at, and above configured text and TXT byte limits exactly', async () => {
+    const textLimits = { ...DEFAULT_PROCESSING_LIMITS, maxTextUtf16CodeUnits: 3 };
+    expect(() => validateInputText('abc', textLimits)).not.toThrow();
+    expect(() => validateInputText('abcd', textLimits)).toThrow(/3 UTF-16/);
+    expect(() => validateInputText('ab', textLimits)).not.toThrow();
+
+    let readCount = 0;
+    const exactFile = {
+      name: 'exact.txt',
+      size: 2,
+      async arrayBuffer() {
+        readCount += 1;
+        return new TextEncoder().encode('ab').buffer;
+      },
+    };
+    const smallFileLimits = { ...DEFAULT_PROCESSING_LIMITS, maxTxtInputBytes: 2, maxTextUtf16CodeUnits: 2 };
+    expect(await readTxt(exactFile, smallFileLimits)).toBe('ab');
+    expect(readCount).toBe(1);
+    const oversizedFile = { ...exactFile, size: 3 };
+    await expect(readTxt(oversizedFile, smallFileLimits)).rejects.toThrow(/2 byte/);
+    expect(readCount).toBe(1); // size rejected before file contents are read
+  });
+
+  it('enforces distinct occurrence bounds below, exactly at, and above the configured cap', async () => {
+    const makeInput = (count: number) => {
+      const text = 'CD4+. '.repeat(count);
+      const tokens: Token[] = Array.from({ length: count }, (_, index) => ({
+        start: index * 6,
+        end: index * 6 + 4,
+        surface: 'CD4+',
+        pos: 'NOUN',
+        sentenceId: index,
+      }));
+      return { text, tokens };
+    };
+    const generator = new S1CandidateGenerator();
+    const limit = 100;
+
+    const below = makeInput(limit - 1);
+    expect((await generator.generate(below.text, below.tokens, { occurrenceTracker: new OccurrenceLimitTracker(limit) }))).toHaveLength(limit - 1);
+
+    const exact = makeInput(limit);
+    expect((await generator.generate(exact.text, exact.tokens, { occurrenceTracker: new OccurrenceLimitTracker(limit) }))).toHaveLength(limit);
+
+    const above = makeInput(limit + 1);
+    const tracker = new OccurrenceLimitTracker(limit);
+    await expect(generator.generate(above.text, above.tokens, { occurrenceTracker: tracker })).rejects.toBeInstanceOf(
+      OccurrenceLimitExceededError,
+    );
+    expect(tracker.count).toBe(limit); // stopped on the next distinct span
+  });
+
+  it('deduplicates known/unknown emissions while retaining nested and ambiguous spans in a combined budget', async () => {
+    const tracker = new OccurrenceLimitTracker(2);
+    const pd = await new AhoCorasickRegisteredMatcher().match(
+      'PD. TNF-α.',
+      [
+        { id: 'e-pd1', conceptId: 'c1', revision: 0, text: 'PD', language: { kind: 'language', tag: 'en' }, role: 'preferred', createdAt: TS, updatedAt: TS },
+        { id: 'e-pd2', conceptId: 'c2', revision: 0, text: 'PD', language: { kind: 'language', tag: 'en' }, role: 'abbreviation', createdAt: TS, updatedAt: TS },
+      ],
+      { occurrenceTracker: tracker },
+    );
+    expect(pd).toHaveLength(1);
+    expect(pd[0].state).toBe('ambiguous');
+    expect(pd[0].conceptIds).toEqual(['c1', 'c2']);
+
+    const text = 'PD. TNF-α.';
+    const tokens: Token[] = [
+      { start: 0, end: 2, surface: 'PD', pos: 'NOUN', sentenceId: 0 },
+      { start: 2, end: 3, surface: '.', pos: 'PUNCT', sentenceId: 0 },
+      { start: 4, end: 7, surface: 'TNF', pos: 'PROPN', sentenceId: 1 },
+      { start: 7, end: 8, surface: '-', pos: 'PUNCT', sentenceId: 1 },
+      { start: 8, end: 9, surface: 'α', pos: 'OTHER', sentenceId: 1 },
+      { start: 9, end: 10, surface: '.', pos: 'PUNCT', sentenceId: 1 },
+    ];
+    const unknown = await new S1CandidateGenerator().generate(text, tokens, { occurrenceTracker: tracker });
+    expect(unknown.map((span) => span.surface)).toEqual(['PD', 'TNF-α']);
+    expect(tracker.count).toBe(2); // duplicate PD counted once, TNF-α is a distinct span
+  });
+
+  it('applies one configured cap to grouped known and unknown spans in the unified run', async () => {
+    const pdExpressions = [
+      { id: 'e-pd1', conceptId: 'c1', revision: 0, text: 'PD', language: { kind: 'language' as const, tag: 'en' as const }, role: 'preferred' as const, createdAt: TS, updatedAt: TS },
+      { id: 'e-pd2', conceptId: 'c2', revision: 0, text: 'PD', language: { kind: 'language' as const, tag: 'en' as const }, role: 'abbreviation' as const, createdAt: TS, updatedAt: TS },
+    ];
+    const snapshot = { ...createEmptySnapshot(), libraryRevision: 1, expressions: pdExpressions } as LibrarySnapshot;
+    const nlp: NlpEngine = {
+      async analyze(text) {
+        const tokens: Token[] = [];
+        for (let start = 0, sentenceId = 0; start < text.length; sentenceId += 1) {
+          const pdStart = text.indexOf('PD', start);
+          const cdStart = text.indexOf('CD4+', start);
+          const found = [pdStart, cdStart].filter((value) => value >= 0).sort((a, b) => a - b)[0];
+          if (found === undefined) break;
+          const surface = text.startsWith('PD', found) ? 'PD' : 'CD4+';
+          tokens.push({ start: found, end: found + surface.length, surface, pos: 'NOUN', sentenceId });
+          start = found + surface.length + 2;
+        }
+        return tokens;
+      },
+    };
+    const limits = { ...DEFAULT_PROCESSING_LIMITS, maxCandidateOccurrences: 100 };
+    const exactlyAtLimit = await analyzeText('PD. CD4+.', snapshot, nlp, new AhoCorasickRegisteredMatcher(), { limits });
+    expect(exactlyAtLimit.occurrences).toHaveLength(2);
+    expect(exactlyAtLimit.occurrences.find((item) => item.surface === 'PD')?.state).toBe('ambiguous');
+    expect(exactlyAtLimit.occurrences.find((item) => item.surface === 'CD4+')?.state).toBe('new-candidate');
+
+    await expect(
+      analyzeText('PD. CD4+. '.repeat(51), snapshot, nlp, new AhoCorasickRegisteredMatcher(), { limits }),
+    ).rejects.toBeInstanceOf(OccurrenceLimitExceededError);
+  });
+
+  it('stops over-limit registered matching before invoking NLP', async () => {
+    let nlpCallCount = 0;
+    const nlp: NlpEngine = {
+      async analyze() {
+        nlpCallCount += 1;
+        return [];
+      },
+    };
+    const expression = {
+      id: 'e-pd',
+      conceptId: 'c-pd',
+      revision: 0,
+      text: 'PD',
+      language: { kind: 'language' as const, tag: 'en' as const },
+      role: 'preferred' as const,
+      createdAt: TS,
+      updatedAt: TS,
+    };
+    const snapshot = { ...createEmptySnapshot(), expressions: [expression] } as LibrarySnapshot;
+    const limits = { ...DEFAULT_PROCESSING_LIMITS, maxCandidateOccurrences: 100 };
+    await expect(
+      analyzeText('PD. '.repeat(101), snapshot, nlp, new AhoCorasickRegisteredMatcher(), { limits }),
+    ).rejects.toBeInstanceOf(OccurrenceLimitExceededError);
+    expect(nlpCallCount).toBe(0);
   });
 
   it('enforces 2 MiB file cap, 200k UTF-16 text cap, fatal UTF-8 decoding, and cancellation without silent truncation', async () => {

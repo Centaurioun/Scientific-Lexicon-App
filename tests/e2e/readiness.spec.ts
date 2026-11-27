@@ -43,13 +43,15 @@ test.describe('C5 / G4: Real-data readiness probes (separate from G3)', () => {
 
     // Both tabs must converge on the one committed record after reload.
     await Promise.all([tabA.reload(), tabB.reload()]);
+    await Promise.all([
+      expect(tabA.getByTestId('library-revision')).toContainText('Rev 1'),
+      expect(tabB.getByTestId('library-revision')).toContainText('Rev 1'),
+    ]);
     const visibleCounts = await Promise.all([
       tabA.getByText('CD4+', { exact: true }).count(),
       tabA.getByText('IL-6', { exact: true }).count(),
     ]);
     expect(visibleCounts.reduce((sum, count) => sum + count, 0)).toBe(1);
-    await expect(tabA.getByTestId('library-revision')).toContainText('Rev 1');
-    await expect(tabB.getByTestId('library-revision')).toContainText('Rev 1');
     expect(await tabB.getByText('CD4+', { exact: true }).count()).toBe(visibleCounts[0]);
     expect(await tabB.getByText('IL-6', { exact: true }).count()).toBe(visibleCounts[1]);
   });

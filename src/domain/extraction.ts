@@ -1,4 +1,5 @@
 import { compareCodeUnits, type Expression, type Occurrence } from './schema';
+import type { OccurrenceLimitTracker } from './processing-limits';
 
 export const MATCH_BOUNDARY_POLICY = 's1-boundary-v1';
 export const CANDIDATE_GRAMMAR_VERSION = 's1-grammar-1';
@@ -31,11 +32,29 @@ export interface NlpEngine {
 }
 
 export interface RegisteredMatcher {
-  match(text: string, expressions: readonly Expression[]): Promise<Occurrence[]>;
+  match(
+    text: string,
+    expressions: readonly Expression[],
+    options?: MatcherOptions,
+  ): Promise<Occurrence[]>;
+}
+
+export interface MatcherOptions {
+  occurrenceTracker?: OccurrenceLimitTracker;
+  signal?: AbortSignal;
+}
+
+export interface CandidateGenerationOptions {
+  occurrenceTracker?: OccurrenceLimitTracker;
+  signal?: AbortSignal;
 }
 
 export interface CandidateGenerator {
-  generate(text: string, tokens: readonly Token[], signal?: AbortSignal): Promise<Span[]>;
+  generate(
+    text: string,
+    tokens: readonly Token[],
+    options?: CandidateGenerationOptions,
+  ): Promise<Span[]>;
 }
 
 export interface ExtractionRun {

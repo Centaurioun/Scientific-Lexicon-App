@@ -140,6 +140,15 @@ describe('complete portable backup validation (C2)', () => {
     );
   });
 
+  it('keeps generated backup size within the restore limit and round-trips a verified snapshot', async () => {
+    const backup = await createBackup(makeRichSnapshot());
+    const serialized = serializeBackupFile(backup);
+    expect(new TextEncoder().encode(serialized).byteLength).toBeLessThanOrEqual(MAX_BACKUP_FILE_BYTES);
+    const restored = await parseBackupFileText(serialized);
+    expect(restored.digest).toBe(backup.digest);
+    expect(restored.snapshot).toEqual(backup.snapshot);
+  });
+
   it('rejects wrong digest, unsupported version, unknown fields, non-JSON, presentation exports, duplicate IDs, orphan expressions, bad spans, and invalid history', async () => {
     const snap = makeRichSnapshot();
     const backup = await createBackup(snap);

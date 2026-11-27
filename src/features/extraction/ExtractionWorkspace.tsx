@@ -6,8 +6,6 @@ import { BrowserLocalNlpEngine } from '@/adapters/nlp/wink-engine';
 import { getBrowserLibraryRepository } from '@/adapters/storage/dexie-library';
 import {
   analyzeText,
-  MAX_TEXT_UTF16_LENGTH,
-  MAX_TXT_FILE_BYTES,
   selectCandidates,
 } from '@/application/extraction';
 import {
@@ -20,9 +18,15 @@ import { AppHeader } from '@/components/AppHeader';
 import { ChangeApprovalDialog } from '@/components/ChangeApprovalDialog';
 import type { ChangePayload, ProposedChange } from '@/domain/changes';
 import type { CandidateFilter, ExtractionRun } from '@/domain/extraction';
+import {
+  DEFAULT_PROCESSING_LIMITS,
+  type ProcessingLimits,
+} from '@/domain/processing-limits';
 import type { LibrarySnapshot, Occurrence } from '@/domain/schema';
 import { CandidateTable } from './CandidateTable';
+import { ProcessingLimitsPanel } from './ProcessingLimitsPanel';
 import { readTxt } from './read-text';
+import { readProcessingLimits, writeProcessingLimits } from './processing-limits-store';
 import {
   clearSessionExtractionRun,
   getSessionExtractionRun,
@@ -40,6 +44,9 @@ export function ExtractionWorkspace() {
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
+  const [processingLimits, setProcessingLimits] = useState<ProcessingLimits>(DEFAULT_PROCESSING_LIMITS);
+  const [processingLimitsReady, setProcessingLimitsReady] = useState(false);
+  const [processingLimitsNotice, setProcessingLimitsNotice] = useState<string | null>(null);
 
   const [filter, setFilter] = useState<CandidateFilter>('all');
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
@@ -107,6 +114,19 @@ export function ExtractionWorkspace() {
     };
   }, [loadSnapshot]);
 
+  useEffect(() => {
+    const result = readProcessingLimits();
+    setProcessingLimits(result.limits);
+    setProcessingLimitsNotice(
+      result.status === 'invalid'
+        ? 'Saved processing preferences were invalid; authorized defaults are active.'
+        : result.status === 'unavailable'
+          ? 'Browser preference storage is unavailable; authorized defaults are active for this page.'
+          : null,
+    );
+    setProcessingLimitsReady(true);
+  }, []);
+
   // Restore text if returning via SPA navigation within the same session
   useEffect(() => {
     if (run && sourceText === '') {
@@ -138,6 +158,31 @@ export function ExtractionWorkspace() {
     }
   };
 
+  const clearActiveRunForPolicyChange = () => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    requestSeqRef.current += 1;
+    setAnalyzing(false);
+    setRun(null);
+    clearSessionExtractionRun();
+    setSelectedOccurrenceId(null);
+    setRejectedIds(new Set());
+    setSessionResolvedMap(new Map());
+    setPendingProposal(null);
+    setPendingRetainMeta(null);
+    setRetainedRunLink(null);
+    setRetentionConsent(false);
+    setAnalysisError(null);
+  };
+
+  const handleSaveProcessingLimits = (nextLimits: ProcessingLimits) => {
+    const saved = writeProcessingLimits(nextLimits);
+    clearActiveRunForPolicyChange();
+    setProcessingLimits(saved);
+    setStatusNotice(null);
+    setProcessingLimitsNotice('Processing limits saved for this browser only.');
+  };
+
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -147,7 +192,7 @@ export function ExtractionWorkspace() {
     setStatusNotice(null);
     handleSourceTextChange('');
     try {
-      const decoded = await readTxt(file);
+      const decoded = await readTxt(file, processingLimits);
       setSourceText(decoded);
       setRetentionTitle(file.name.replace(/\.txt$/i, '') || 'Local TXT source');
       setStatusNotice(
@@ -159,7 +204,7 @@ export function ExtractionWorkspace() {
   };
 
   const handleAnalyze = async () => {
-    if (!snapshot) return;
+    if (!snapshot || !processingLimitsReady) return;
     abortRef.current?.abort();
     const controller = new AbortController();
     abortRef.current = controller;
@@ -169,6 +214,14 @@ export function ExtractionWorkspace() {
     setAnalyzing(true);
     setAnalysisError(null);
     setStatusNotice(null);
+    setRun(null);
+    clearSessionExtractionRun();
+    setSelectedOccurrenceId(null);
+    setRejectedIds(new Set());
+    setSessionResolvedMap(new Map());
+    setPendingProposal(null);
+    setPendingRetainMeta(null);
+    setRetainedRunLink(null);
 
     try {
       const result = await analyzeText(
@@ -178,7 +231,7 @@ export function ExtractionWorkspace() {
           analyze: (text) => nlpRef.current!.analyze(text, controller.signal),
         },
         matcherRef.current!,
-        { signal: controller.signal },
+        { signal: controller.signal, limits: processingLimits },
       );
 
       // Guard against stale async completion
@@ -543,6 +596,13 @@ export function ExtractionWorkspace() {
           </div>
         )}
 
+        <ProcessingLimitsPanel
+          limits={processingLimits}
+          disabled={!processingLimitsReady || analyzing || applying}
+          notice={processingLimitsNotice}
+          onSave={handleSaveProcessingLimits}
+        />
+
         {/* Input panel */}
         <section className="panel stack-md" aria-labelledby="source-input-heading">
           <div className="panel-header" style={{ marginBottom: 0 }}>
@@ -551,9 +611,9 @@ export function ExtractionWorkspace() {
               <h2 id="source-input-heading">Paste text or load UTF-8 TXT</h2>
             </div>
             <div className="small muted">
-              Limits: {(MAX_TXT_FILE_BYTES / (1024 * 1024)).toFixed(0)} MiB TXT ·{' '}
-              {MAX_TEXT_UTF16_LENGTH.toLocaleString('en-US')} UTF-16 chars (strict reject, no
-              truncation)
+              Effective limits: {processingLimits.maxTxtInputBytes.toLocaleString('en-US')} TXT bytes ·{' '}
+              {processingLimits.maxTextUtf16CodeUnits.toLocaleString('en-US')} UTF-16 chars ·{' '}
+              {processingLimits.maxCandidateOccurrences.toLocaleString('en-US')} distinct occurrence spans (strict reject, no truncation)
             </div>
           </div>
 
@@ -586,7 +646,7 @@ export function ExtractionWorkspace() {
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={analyzing || loadingLibrary || !snapshot || sourceText.trim().length === 0}
+                disabled={analyzing || loadingLibrary || !processingLimitsReady || !snapshot || sourceText.trim().length === 0}
                 onClick={() => void handleAnalyze()}
               >
                 {analyzing ? 'Analyzing locally…' : 'Analyze locally'}
@@ -614,7 +674,7 @@ export function ExtractionWorkspace() {
             <div className="metrics-strip" style={{ marginBottom: 0 }}>
               <div className="metric-chip">
                 <span>Occurrences</span>
-                <strong>{counts.total}</strong>
+                <strong data-testid="occurrence-total">{counts.total}</strong>
               </div>
               <div className="metric-chip">
                 <span>Unique concepts matched</span>
