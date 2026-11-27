@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { getBrowserLibraryRepository } from '@/adapters/storage/dexie-library';
 import {
@@ -191,6 +192,9 @@ export function LibraryWorkspace() {
             </p>
           </div>
           <div className="row-inline">
+            <Link href="/enrichment" className="btn" data-testid="nav-enrichment-link">
+              Source Enrichment
+            </Link>
             <button
               type="button"
               className="btn"

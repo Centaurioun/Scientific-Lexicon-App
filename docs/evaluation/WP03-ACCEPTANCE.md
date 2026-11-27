@@ -158,3 +158,8 @@ Allowed status labels:
 
 ## Independent native execution and transition addendum — 2026-11-27
 173/173 PASS at `e9f91a3b816b999599f19172cdcd84fd9f9cda23`, run 46058256556. [Coordinator qualification](WP03-FINAL-QUALIFICATION.md) records conditional engineering acceptance, H1/H2 source-review findings and H3 erratum required. This supersedes pending native status only for tested source. H1–H3 are mandatory WP04 F1 work; no independent acceptance of later source until combined native execution. G4 unchanged.
+
+## H3 Documentation Erratum — Section 5.5 (`ProvenanceSchema.kind`)
+- **Erratum (`2026-11-27`, WP04 F1 H3):** Section 5.5 above erroneously stated `kind: 'manual' | 'extracted'`. In the actual preserved canonical v1 schema (`src/domain/schema.ts`, `ProvenanceSchema`), the allowed union is strictly **`kind: 'manual' | 'reviewed-candidate'`** (`source: null` is required for `'manual'`; `source` with document/run/span coordinates is used for `'reviewed-candidate'`).
+- WP03 reviewed additive imports use `kind: 'manual'` and `source: null` (with no fabricated source fields), and canonical `schema.ts` v1 remains unchanged.
+

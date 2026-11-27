@@ -2,23 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBrowserLibraryRepository } from '@/adapters/storage/dexie-library';
-import {
-  readSyntheticDelimitedFile,
-  stageApprovedBuiltInSyntheticFixture,
-} from '@/application/delimited-file';
-import { createBackup, serializeBackupFile } from '@/application/exchange';
-import {
-  buildAdditiveImportPlan,
-  PROVENANCE_LIMITATION_DISCLOSURE,
-  type PlannedAdditiveImport,
-} from '@/application/import-planner';
-import { applyChange, approveChange, listLibrary } from '@/application/library';
+import { PROVENANCE_LIMITATION_DISCLOSURE } from '@/application/import-planner';
+import { applyChange, listLibrary } from '@/application/library';
 import {
   APPROVED_SYNTHETIC_IMPORT_FIXTURES,
   DELIMITED_INTAKE_LIMITS,
   type BlankLinePolicy,
   type DelimitedDelimiter,
-  type RawDelimitedStage,
 } from '@/domain/delimited-intake';
 import {
   EXPRESSION_ROLES,
@@ -29,8 +19,6 @@ import {
 } from '@/domain/schema';
 import {
   applyStagingMapping,
-  computeStagingSessionFingerprint,
-  STAGING_MAPPING_SCHEMA_VERSION,
   type MissingLanguagePolicy,
   type MissingRolePolicy,
   type StagingMappingSpec,
@@ -42,6 +30,10 @@ import {
   type StagedRowUserDecision,
 } from '@/domain/staging-review';
 import { RevisionReconciliationController } from '@/features/extraction/concurrency-controller';
+import {
+  DataOperationsSessionController,
+  type DataOperationsViewState,
+} from './data-operations-controller';
 
 const STAGING_PAGE_SIZE = 50;
 
@@ -63,34 +55,6 @@ function triggerUtf8FileDownload(filename: string, content: string, mimeType: st
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function createDefaultMappingForStage(stage: RawDelimitedStage): StagingMappingSpec {
-  const colCount = stage.headers.length;
-  if (colCount >= 4) {
-    return {
-      mappingVersion: STAGING_MAPPING_SCHEMA_VERSION,
-      termColumnIndex: 1,
-      languageSource: { kind: 'column', columnIndex: 2, missingPolicy: 'error' },
-      roleSource: { kind: 'column', columnIndex: 3, missingPolicy: 'unspecified' },
-      groupKeyColumnIndex: 0,
-      textTransform: 'trim-collapse-spaces',
-    };
-  }
-  return {
-    mappingVersion: STAGING_MAPPING_SCHEMA_VERSION,
-    termColumnIndex: 0,
-    languageSource:
-      colCount > 1
-        ? { kind: 'column', columnIndex: 1, missingPolicy: 'error' }
-        : { kind: 'fixed', value: { kind: 'language', tag: 'en' } },
-    roleSource:
-      colCount > 2
-        ? { kind: 'column', columnIndex: 2, missingPolicy: 'unspecified' }
-        : { kind: 'fixed', value: 'preferred' },
-    groupKeyColumnIndex: null,
-    textTransform: 'trim-collapse-spaces',
-  };
-}
-
 function encodeLanguageUseOption(lang: LanguageUse): string {
   if (lang.kind === 'shared') return 'shared';
   if (lang.kind === 'undetermined') return 'undetermined';
@@ -106,6 +70,22 @@ function decodeLanguageUseOption(value: string): LanguageUse {
   return { kind: 'undetermined' };
 }
 
+const INITIAL_VIEW_STATE: DataOperationsViewState = {
+  rawStage: null,
+  mappingSpec: null,
+  rowDecisions: {},
+  plannedImport: null,
+  reviewIntentDigest: null,
+  backupProof: null,
+  preCommitAckChecked: false,
+  applyingImport: false,
+  intakeError: null,
+  intakeNotice: null,
+  planningError: null,
+  commitNotice: null,
+  preCommitBackupNotice: null,
+};
+
 export function DataOperationsPanel({
   snapshot,
   disabled,
@@ -116,41 +96,82 @@ export function DataOperationsPanel({
   );
   const [explicitDelimiter, setExplicitDelimiter] = useState<DelimitedDelimiter>(',');
   const [blankLinePolicy, setBlankLinePolicy] = useState<BlankLinePolicy>('skip');
-
-  const [rawStage, setRawStage] = useState<RawDelimitedStage | null>(null);
-  const [mappingSpec, setMappingSpec] = useState<StagingMappingSpec | null>(null);
-  const [rowDecisions, setRowDecisions] = useState<Record<string, StagedRowUserDecision>>({});
-
+  const [viewState, setViewState] = useState<DataOperationsViewState>(INITIAL_VIEW_STATE);
   const [searchFilter, setSearchFilter] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
-
-  const [intakeError, setIntakeError] = useState<string | null>(null);
-  const [intakeNotice, setIntakeNotice] = useState<string | null>(null);
-  const [planningError, setPlanningError] = useState<string | null>(null);
-  const [commitNotice, setCommitNotice] = useState<string | null>(null);
-
-  const [plannedImport, setPlannedImport] = useState<PlannedAdditiveImport | null>(null);
-  const [preCommitBackupNotice, setPreCommitBackupNotice] = useState<string | null>(null);
-  const [preCommitAckChecked, setPreCommitAckChecked] = useState(false);
-  const [applyingImport, setApplyingImport] = useState(false);
   const [freshnessConfirmed, setFreshnessConfirmed] = useState(true);
+
+  const snapshotRef = useRef<LibrarySnapshot | null>(snapshot);
+  snapshotRef.current = snapshot;
+  const viewStateRef = useRef<DataOperationsViewState>(viewState);
+  viewStateRef.current = viewState;
+  const onSnapshotChangedRef = useRef(onSnapshotChanged);
+  onSnapshotChangedRef.current = onSnapshotChanged;
 
   const reconcilerRef = useRef<RevisionReconciliationController>(
     new RevisionReconciliationController()
   );
 
+  const controllerRef = useRef<DataOperationsSessionController | null>(null);
+  if (!controllerRef.current) {
+    controllerRef.current = new DataOperationsSessionController({
+      reconciler: reconcilerRef.current,
+      getSnapshot: () => snapshotRef.current,
+      getViewState: () => viewStateRef.current,
+      patchViewState: (patch) => {
+        const next = { ...viewStateRef.current, ...patch };
+        viewStateRef.current = next;
+        setViewState(next);
+      },
+      readAuthoritativeSnapshot: async () => {
+        try {
+          const repo = getBrowserLibraryRepository();
+          return await listLibrary(repo);
+        } catch {
+          return null;
+        }
+      },
+      onSnapshotChanged: async (nextSnapshot) => {
+        await onSnapshotChangedRef.current(nextSnapshot);
+      },
+      downloadFile: triggerUtf8FileDownload,
+      applyBatch: async (proposal, approval) => {
+        const repo = getBrowserLibraryRepository();
+        return applyChange(repo, proposal, approval);
+      },
+      onFreshnessChange: (confirmed) => setFreshnessConfirmed(confirmed),
+    });
+  }
+
+  const {
+    rawStage,
+    mappingSpec,
+    rowDecisions,
+    plannedImport,
+    reviewIntentDigest,
+    backupProof,
+    preCommitAckChecked,
+    applyingImport,
+    intakeError,
+    intakeNotice,
+    planningError,
+    commitNotice,
+    preCommitBackupNotice,
+  } = viewState;
+
   const reloadFreshSnapshot = useCallback(async (): Promise<LibrarySnapshot | null> => {
     try {
       const repo = getBrowserLibraryRepository();
       const fresh = await listLibrary(repo);
-      await onSnapshotChanged(fresh);
+      await onSnapshotChangedRef.current(fresh);
       return fresh;
     } catch {
       return null;
     }
-  }, [onSnapshotChanged]);
+  }, []);
 
   useEffect(() => {
+    controllerRef.current?.remount();
     const controller = reconcilerRef.current;
     const repo = getBrowserLibraryRepository();
     const unsub = repo.subscribeRevision((notifiedRev) => {
@@ -162,28 +183,21 @@ export function DataOperationsPanel({
       }
     });
 
-    if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') {
-      return () => {
-        unsub();
-      };
-    }
-
-    const channel = new BroadcastChannel('termforge-library-sync');
-    channel.onmessage = (event: MessageEvent<{ revision?: number }>) => {
-      const notifiedRev = event.data?.revision ?? 0;
-      const decision = controller.observeRevisionNotification(notifiedRev);
-      if (decision.action === 'handle-external-immediately') {
-        void controller.confirmFreshnessWithSnapshot(reloadFreshSnapshot).then(() => {
-          setFreshnessConfirmed(controller.isFreshnessConfirmed());
-        });
-      }
-    };
-
     return () => {
       unsub();
-      channel.close();
+      controllerRef.current?.unmount();
     };
   }, [reloadFreshSnapshot]);
+
+  // Invalidate any stale proposal or backup proof whenever authoritative snapshot revision changes
+  const prevRevisionRef = useRef<number | null>(snapshot?.libraryRevision ?? null);
+  useEffect(() => {
+    const currentRev = snapshot?.libraryRevision ?? null;
+    if (prevRevisionRef.current !== null && currentRev !== prevRevisionRef.current) {
+      controllerRef.current?.notifyRevisionChanged();
+    }
+    prevRevisionRef.current = currentRev;
+  }, [snapshot?.libraryRevision]);
 
   const stagedTable = useMemo(() => {
     if (!rawStage || !mappingSpec || !snapshot) return null;
@@ -194,132 +208,82 @@ export function DataOperationsPanel({
     }
   }, [rawStage, mappingSpec, snapshot]);
 
-  const sessionFingerprint = useMemo(() => {
-    if (!stagedTable) return null;
-    return computeStagingSessionFingerprint(stagedTable);
-  }, [stagedTable]);
-
   const reviewEvaluation = useMemo(() => {
     if (!stagedTable || !snapshot) return null;
     return evaluateStagingReview(stagedTable, snapshot, rowDecisions);
   }, [stagedTable, snapshot, rowDecisions]);
 
-  // Invalidate any active proposal if session fingerprint or library revision drifts
-  const isProposalCurrent =
-    plannedImport !== null &&
-    sessionFingerprint !== null &&
-    snapshot !== null &&
-    plannedImport.sessionFingerprint === sessionFingerprint &&
-    plannedImport.proposal.payload.baseLibraryRevision === snapshot.libraryRevision;
+  const isProposalCurrent = Boolean(
+    plannedImport &&
+      reviewIntentDigest &&
+      rawStage &&
+      stagedTable &&
+      reviewEvaluation &&
+      snapshot &&
+      plannedImport.proposal.payload.baseLibraryRevision === snapshot.libraryRevision &&
+      rawStage.blankLinePolicy === blankLinePolicy &&
+      rawStage.delimiter === explicitDelimiter
+  );
 
-  const initializeStageAndMapping = (stage: RawDelimitedStage) => {
-    const defaultMapping = createDefaultMappingForStage(stage);
-    setRawStage(stage);
-    setMappingSpec(defaultMapping);
-    setPlannedImport(null);
-    setPreCommitBackupNotice(null);
-    setPreCommitAckChecked(false);
-    setPlanningError(null);
-    setCommitNotice(null);
-    setCurrentPage(1);
-
-    if (snapshot) {
-      const mapped = applyStagingMapping(stage, defaultMapping, snapshot.libraryRevision);
-      const suggested = buildSuggestedInitialDecisions(mapped, snapshot);
-      setRowDecisions(suggested);
-    } else {
-      setRowDecisions({});
-    }
-  };
+  const isBackupProofCurrent = Boolean(
+    isProposalCurrent &&
+      plannedImport &&
+      backupProof &&
+      reviewIntentDigest &&
+      snapshot &&
+      backupProof.proposalDigest === plannedImport.proposal.digest &&
+      backupProof.batchId === plannedImport.proposal.payload.batchId &&
+      backupProof.reviewIntentDigest === reviewIntentDigest &&
+      backupProof.snapshotRevision === snapshot.libraryRevision
+  );
 
   const handleStageBuiltInFixture = async () => {
-    setIntakeError(null);
-    setIntakeNotice(null);
-    setCommitNotice(null);
-    try {
-      const fixture = APPROVED_SYNTHETIC_IMPORT_FIXTURES.find((f) => f.id === selectedFixtureId);
-      if (fixture) {
-        setExplicitDelimiter(fixture.delimiter);
-      }
-      const stage = await stageApprovedBuiltInSyntheticFixture(
-        selectedFixtureId,
-        blankLinePolicy
-      );
-      initializeStageAndMapping(stage);
-      setIntakeNotice(
-        `Staged approved synthetic fixture "${stage.sourceName}" (${stage.rows.length} rows, SHA-256 ${stage.rawByteSha256.slice(0, 16)}…).`
-      );
-    } catch (error) {
-      setIntakeError(
-        error instanceof Error ? error.message : 'Unable to stage built-in synthetic fixture.'
-      );
+    const fixture = controllerRef.current?.getApprovedFixtureById(selectedFixtureId);
+    if (fixture) {
+      setExplicitDelimiter(fixture.delimiter);
     }
+    setCurrentPage(1);
+    await controllerRef.current?.stageBuiltInFixture(selectedFixtureId, blankLinePolicy);
   };
 
   const handleDownloadSelectedFixture = () => {
-    const fixture = APPROVED_SYNTHETIC_IMPORT_FIXTURES.find((f) => f.id === selectedFixtureId);
+    const fixture = controllerRef.current?.getApprovedFixtureById(selectedFixtureId);
     if (!fixture) return;
     const mime = fixture.delimiter === '\t' ? 'text/tab-separated-values' : 'text/csv';
     triggerUtf8FileDownload(fixture.filename, fixture.rawText, mime);
-    setIntakeNotice(
-      `Synthetic fixture "${fixture.filename}" offered for download (SHA-256 ${fixture.rawByteSha256.slice(0, 16)}…).`
-    );
+    viewStateRef.current = {
+      ...viewStateRef.current,
+      intakeNotice: `Synthetic fixture "${fixture.filename}" offered for download (SHA-256 ${fixture.rawByteSha256.slice(0, 16)}…).`,
+    };
+    setViewState(viewStateRef.current);
   };
 
   const handleUploadSyntheticFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-
-    setIntakeError(null);
-    setIntakeNotice(null);
-    setCommitNotice(null);
-
-    try {
-      const stage = await readSyntheticDelimitedFile(file, {
-        delimiter: explicitDelimiter,
-        blankLinePolicy,
-      });
-      initializeStageAndMapping(stage);
-      setIntakeNotice(
-        `Verified and staged uploaded synthetic file "${stage.sourceName}" (${stage.rows.length} rows, SHA-256 ${stage.rawByteSha256.slice(0, 16)}…).`
-      );
-    } catch (error) {
-      setIntakeError(
-        error instanceof Error
-          ? error.message
-          : 'Uploaded file failed synthetic allowlist or delimited parser validation.'
-      );
-    }
+    setCurrentPage(1);
+    await controllerRef.current?.stageUploadedFile({
+      file,
+      name: file.name,
+      size: file.size,
+      delimiter: explicitDelimiter,
+      blankLinePolicy,
+    });
   };
 
   const handleUpdateMapping = (updater: (prev: StagingMappingSpec) => StagingMappingSpec) => {
-    setMappingSpec((prev) => {
-      if (!prev) return prev;
-      return updater(prev);
-    });
-    setPlannedImport(null);
-    setPreCommitAckChecked(false);
-    setPlanningError(null);
+    controllerRef.current?.updateMapping(updater);
   };
 
   const handleSetRowDecision = (rowId: string, decision: StagedRowUserDecision) => {
-    setRowDecisions((prev) => ({
-      ...prev,
-      [rowId]: decision,
-    }));
-    setPlannedImport(null);
-    setPreCommitAckChecked(false);
-    setPlanningError(null);
+    controllerRef.current?.setRowDecision(rowId, decision);
   };
 
   const handleApplySuggestedDecisions = () => {
     if (!stagedTable || !snapshot) return;
     const suggested = buildSuggestedInitialDecisions(stagedTable, snapshot);
-    setRowDecisions(suggested);
-    setPlannedImport(null);
-    setPreCommitAckChecked(false);
-    setPlanningError(null);
+    controllerRef.current?.replaceRowDecisions(suggested);
   };
 
   const handleSkipUnresolvedAndInvalid = () => {
@@ -330,10 +294,7 @@ export function DataOperationsPanel({
         updated[r.row.rowId] = { action: 'skip' };
       }
     }
-    setRowDecisions(updated);
-    setPlannedImport(null);
-    setPreCommitAckChecked(false);
-    setPlanningError(null);
+    controllerRef.current?.replaceRowDecisions(updated);
   };
 
   const handleResetDecisions = () => {
@@ -342,113 +303,19 @@ export function DataOperationsPanel({
     for (const r of stagedTable.rows) {
       reset[r.rowId] = { action: 'unresolved' };
     }
-    setRowDecisions(reset);
-    setPlannedImport(null);
-    setPreCommitAckChecked(false);
-    setPlanningError(null);
+    controllerRef.current?.replaceRowDecisions(reset);
   };
 
   const handleBuildProposal = async () => {
-    if (!reviewEvaluation || !snapshot) return;
-    setPlanningError(null);
-    setCommitNotice(null);
-
-    if (reconcilerRef.current && !reconcilerRef.current.isFreshnessConfirmed()) {
-      setPlanningError(
-        'Library revision freshness is unconfirmed after concurrent background updates. Click "Confirm latest revision" before building a proposal.'
-      );
-      return;
-    }
-
-    try {
-      const planned = await buildAdditiveImportPlan(reviewEvaluation, snapshot);
-      setPlannedImport(planned);
-      setPreCommitAckChecked(false);
-    } catch (error) {
-      setPlannedImport(null);
-      setPlanningError(
-        error instanceof Error ? error.message : 'Unable to build additive import proposal.'
-      );
-    }
+    await controllerRef.current?.buildProposal();
   };
 
   const handleOfferPreCommitBackup = async () => {
-    if (!snapshot) return;
-    setPlanningError(null);
-    try {
-      const envelope = await createBackup(snapshot);
-      const serialized = serializeBackupFile(envelope);
-      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const filename = `termforge-pre-import-backup-rev${snapshot.libraryRevision}-${stamp}.json`;
-      triggerUtf8FileDownload(filename, serialized, 'application/json');
-      setPreCommitBackupNotice(
-        `Pre-commit backup "${filename}" (Rev ${snapshot.libraryRevision}, SHA-256 ${envelope.digest.slice(0, 16)}…) offered for browser download. Note: browser download initiation cannot verify that the file was saved to external disk.`
-      );
-    } catch (error) {
-      setPlanningError(
-        error instanceof Error ? error.message : 'Unable to generate pre-commit portable backup.'
-      );
-    }
+    await controllerRef.current?.offerPreCommitBackup();
   };
 
   const handleApproveAndApplyImport = async () => {
-    if (!plannedImport || !isProposalCurrent || !preCommitAckChecked || applyingImport) return;
-
-    if (reconcilerRef.current && !reconcilerRef.current.isFreshnessConfirmed()) {
-      setPlanningError(
-        'Library revision freshness is unconfirmed. Reload and confirm the latest revision before committing.'
-      );
-      return;
-    }
-
-    setApplyingImport(true);
-    setPlanningError(null);
-    setCommitNotice(null);
-
-    try {
-      const repo = getBrowserLibraryRepository();
-      const approval = approveChange(plannedImport.proposal);
-      const result = await applyChange(repo, plannedImport.proposal, approval);
-
-      if (result.status === 'applied' || result.status === 'replay') {
-        const appliedOpsCount = plannedImport.summary.totalOperations;
-        setPlannedImport(null);
-        setPreCommitAckChecked(false);
-        setRawStage(null);
-        setMappingSpec(null);
-        setRowDecisions({});
-
-        await onSnapshotChanged();
-
-        if (typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined') {
-          const ch = new BroadcastChannel('termforge-library-sync');
-          ch.postMessage({ revision: result.revision });
-          ch.close();
-        }
-
-        setCommitNotice(
-          result.status === 'applied'
-            ? `Committed reviewed additive import batch (${appliedOpsCount} operations) atomically at library revision ${result.revision}.`
-            : `Import batch already recorded at library revision ${result.revision} (idempotent replay).`
-        );
-      } else {
-        setPlannedImport(null);
-        setPreCommitAckChecked(false);
-        await onSnapshotChanged();
-        setPlanningError(
-          `Import batch rejected (${result.status.toUpperCase()}): ${result.reason}`
-        );
-      }
-    } catch (error) {
-      setPlannedImport(null);
-      setPreCommitAckChecked(false);
-      await onSnapshotChanged();
-      setPlanningError(
-        error instanceof Error ? error.message : 'Atomic import batch commit failed.'
-      );
-    } finally {
-      setApplyingImport(false);
-    }
+    await controllerRef.current?.approveAndApply();
   };
 
   const handleConfirmFreshnessManual = async () => {
@@ -563,9 +430,10 @@ export function DataOperationsPanel({
               className="select"
               value={explicitDelimiter}
               disabled={disabled || applyingImport}
-              onChange={(event) =>
-                setExplicitDelimiter(event.target.value as DelimitedDelimiter)
-              }
+              onChange={(event) => {
+                setExplicitDelimiter(event.target.value as DelimitedDelimiter);
+                controllerRef.current?.invalidateReviewAndProposal();
+              }}
             >
               <option value=",">Comma (&quot;,&quot; — CSV)</option>
               <option value={'\t'}>Tab (&quot;\t&quot; — TSV)</option>
@@ -579,7 +447,10 @@ export function DataOperationsPanel({
               className="select"
               value={blankLinePolicy}
               disabled={disabled || applyingImport}
-              onChange={(event) => setBlankLinePolicy(event.target.value as BlankLinePolicy)}
+              onChange={(event) => {
+                setBlankLinePolicy(event.target.value as BlankLinePolicy);
+                controllerRef.current?.invalidateReviewAndProposal();
+              }}
             >
               <option value="skip">Skip physical blank lines (record line numbers)</option>
               <option value="error-row">Flag blank lines as blocking row errors</option>
@@ -626,15 +497,7 @@ export function DataOperationsPanel({
               type="button"
               className="btn"
               disabled={applyingImport}
-              onClick={() => {
-                setRawStage(null);
-                setMappingSpec(null);
-                setRowDecisions({});
-                setPlannedImport(null);
-                setPreCommitAckChecked(false);
-                setIntakeNotice(null);
-                setPlanningError(null);
-              }}
+              onClick={() => controllerRef.current?.clearStagingSession()}
               data-testid="clear-staging-session-btn"
             >
               Discard in-memory staging session
@@ -1348,7 +1211,7 @@ export function DataOperationsPanel({
                   <button
                     type="button"
                     className="btn"
-                    disabled={applyingImport}
+                    disabled={applyingImport || !isProposalCurrent}
                     onClick={() => void handleOfferPreCommitBackup()}
                     data-testid="offer-precommit-backup-btn"
                   >
@@ -1356,7 +1219,20 @@ export function DataOperationsPanel({
                   </button>
                 </div>
 
-                {preCommitBackupNotice && (
+                {!isBackupProofCurrent && (
+                  <div
+                    className="banner banner-warning"
+                    role="status"
+                    data-testid="precommit-backup-required-banner"
+                  >
+                    <strong>Pre-commit backup required first:</strong> Offer and validate a
+                    current-snapshot portable backup bound to this exact proposal and library revision{' '}
+                    <span className="mono">Rev {snapshot.libraryRevision}</span> before
+                    acknowledgment and commit become enabled.
+                  </div>
+                )}
+
+                {preCommitBackupNotice && isBackupProofCurrent && (
                   <div
                     className="banner banner-info"
                     role="status"
@@ -1369,15 +1245,20 @@ export function DataOperationsPanel({
                 <label className="checkbox-row">
                   <input
                     type="checkbox"
-                    checked={preCommitAckChecked}
-                    disabled={applyingImport}
-                    onChange={(e) => setPreCommitAckChecked(e.target.checked)}
+                    checked={isBackupProofCurrent ? preCommitAckChecked : false}
+                    disabled={
+                      applyingImport ||
+                      !isProposalCurrent ||
+                      !isBackupProofCurrent ||
+                      !freshnessConfirmed
+                    }
+                    onChange={(e) => controllerRef.current?.setPreCommitAck(e.target.checked)}
                     data-testid="precommit-ack-checkbox"
                   />
                   <span className="small">
-                    I have downloaded or verified my portable backup (knowing browser download
-                    initiation cannot prove external disk storage) and acknowledge the unmapped
-                    column loss summary and v1 manual provenance (
+                    I have downloaded or verified my proposal-bound pre-commit backup (knowing
+                    browser download initiation cannot prove external disk storage) and acknowledge
+                    the unmapped column loss summary and v1 manual provenance (
                     <span className="mono">kind: &quot;manual&quot;, source: null</span>).
                   </span>
                 </label>
@@ -1386,7 +1267,13 @@ export function DataOperationsPanel({
                   <button
                     type="button"
                     className="btn btn-primary"
-                    disabled={!preCommitAckChecked || applyingImport || !freshnessConfirmed}
+                    disabled={
+                      !isProposalCurrent ||
+                      !isBackupProofCurrent ||
+                      !preCommitAckChecked ||
+                      applyingImport ||
+                      !freshnessConfirmed
+                    }
                     onClick={() => void handleApproveAndApplyImport()}
                     data-testid="approve-apply-import-btn"
                   >
@@ -1396,10 +1283,7 @@ export function DataOperationsPanel({
                     type="button"
                     className="btn"
                     disabled={applyingImport}
-                    onClick={() => {
-                      setPlannedImport(null);
-                      setPreCommitAckChecked(false);
-                    }}
+                    onClick={() => controllerRef.current?.cancelProposal()}
                     data-testid="cancel-import-proposal-btn"
                   >
                     Cancel proposal

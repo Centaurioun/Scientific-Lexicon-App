@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getBrowserLibraryRepository } from '@/adapters/storage/dexie-library';
 import {
   formatExport,
@@ -13,6 +14,7 @@ import {
 import { listLibrary } from '@/application/library';
 import { AppHeader } from '@/components/AppHeader';
 import type { LibrarySnapshot } from '@/domain/schema';
+import { shouldApplySnapshotLoad } from '@/features/extraction/concurrency-controller';
 import { getSessionExtractionRun } from '@/features/extraction/session-run-store';
 import { BackupPanel } from './BackupPanel';
 import { DataOperationsPanel } from './DataOperationsPanel';
@@ -51,33 +53,75 @@ export function ExportWorkspace() {
   const [includeKnown, setIncludeKnown] = useState(true);
   const [downloadNotice, setDownloadNotice] = useState<string | null>(null);
 
+  const mountedRef = useRef(true);
+  const snapshotLoadSeqRef = useRef(0);
+
   const sessionRun = getSessionExtractionRun();
 
   const loadSnapshot = useCallback(async (providedSnapshot?: LibrarySnapshot) => {
+    const loadSeq = ++snapshotLoadSeqRef.current;
     if (providedSnapshot) {
-      setSnapshot(providedSnapshot);
-      setStorageError(null);
-      setLoading(false);
+      if (
+        shouldApplySnapshotLoad({
+          mounted: mountedRef.current,
+          capturedLoadSeq: loadSeq,
+          currentLoadSeq: snapshotLoadSeqRef.current,
+        })
+      ) {
+        setSnapshot(providedSnapshot);
+        setStorageError(null);
+        setLoading(false);
+      }
       return;
     }
-    setLoading(true);
-    setStorageError(null);
+    if (mountedRef.current) {
+      setLoading(true);
+      setStorageError(null);
+    }
     try {
       const repo = getBrowserLibraryRepository();
       const loaded = await listLibrary(repo);
-      setSnapshot(loaded);
+      if (
+        shouldApplySnapshotLoad({
+          mounted: mountedRef.current,
+          capturedLoadSeq: loadSeq,
+          currentLoadSeq: snapshotLoadSeqRef.current,
+        })
+      ) {
+        setSnapshot(loaded);
+      }
     } catch (error) {
-      setStorageError(
-        error instanceof Error ? error.message : 'Unable to open browser IndexedDB library.',
-      );
-      setSnapshot(null);
+      if (
+        shouldApplySnapshotLoad({
+          mounted: mountedRef.current,
+          capturedLoadSeq: loadSeq,
+          currentLoadSeq: snapshotLoadSeqRef.current,
+        })
+      ) {
+        setStorageError(
+          error instanceof Error ? error.message : 'Unable to open browser IndexedDB library.',
+        );
+        setSnapshot(null);
+      }
     } finally {
-      setLoading(false);
+      if (
+        shouldApplySnapshotLoad({
+          mounted: mountedRef.current,
+          capturedLoadSeq: loadSeq,
+          currentLoadSeq: snapshotLoadSeqRef.current,
+        })
+      ) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     void loadSnapshot();
+    return () => {
+      mountedRef.current = false;
+    };
   }, [loadSnapshot]);
 
   const rows = useMemo(() => {
@@ -113,14 +157,19 @@ export function ExportWorkspace() {
               and read-only library quality diagnostics. All operations occur locally in your browser.
             </p>
           </div>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => void loadSnapshot()}
-            disabled={loading}
-          >
-            Refresh library
-          </button>
+          <div className="row-inline">
+            <Link href="/enrichment" className="btn" data-testid="nav-enrichment-link">
+              Source Enrichment
+            </Link>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void loadSnapshot()}
+              disabled={loading}
+            >
+              Refresh library
+            </button>
+          </div>
         </div>
 
         {storageError && (

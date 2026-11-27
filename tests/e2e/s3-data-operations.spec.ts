@@ -53,10 +53,12 @@ test.describe('WP03 S3: Reviewed synthetic data operations, quality inspector, a
     await expect(page.getByTestId('planned-import-preview')).toBeVisible();
     await expect(page.getByTestId('proposal-total-ops')).toHaveText('2');
 
-    // Approve button is disabled until pre-commit backup / loss contract acknowledgment is checked
+    // H1 negative assertions: BEFORE pre-commit backup offer, BOTH ack checkbox and apply button MUST be disabled
+    await expect(page.getByTestId('precommit-backup-required-banner')).toBeVisible();
+    await expect(page.getByTestId('precommit-ack-checkbox')).toBeDisabled();
     await expect(page.getByTestId('approve-apply-import-btn')).toBeDisabled();
 
-    // Offer pre-commit backup download
+    // Offer pre-commit backup download bound to exact proposal & Rev 0
     const preBackupDownloadPromise = page.waitForEvent('download');
     await page.getByTestId('offer-precommit-backup-btn').click();
     const preBackupDownload = await preBackupDownloadPromise;
@@ -64,8 +66,23 @@ test.describe('WP03 S3: Reviewed synthetic data operations, quality inspector, a
     await expect(page.getByTestId('precommit-backup-notice')).toContainText(
       /browser download initiation cannot verify/i
     );
+    await expect(page.getByTestId('precommit-ack-checkbox')).toBeEnabled();
 
-    // Check acknowledgment & commit atomic batch
+    // H2 negative assertion: Changing a row decision invalidates proposal & backup proof immediately
+    await page.getByTestId('decision-select-row-3').selectOption('create-new-concept');
+    await expect(page.getByTestId('planned-import-preview')).toHaveCount(0);
+    await page.getByTestId('decision-select-row-3').selectOption('skip');
+    await page.getByTestId('build-import-proposal-btn').click();
+    await expect(page.getByTestId('planned-import-preview')).toBeVisible();
+    await expect(page.getByTestId('precommit-ack-checkbox')).toBeDisabled();
+    await expect(page.getByTestId('approve-apply-import-btn')).toBeDisabled();
+
+    // Offer fresh pre-commit backup after rebuild, then check acknowledgment & commit atomic batch
+    const preBackupRebuiltPromise = page.waitForEvent('download');
+    await page.getByTestId('offer-precommit-backup-btn').click();
+    const preBackupRebuiltDownload = await preBackupRebuiltPromise;
+    expect(preBackupRebuiltDownload.suggestedFilename()).toMatch(/termforge-pre-import-backup-rev0/i);
+
     await page.getByTestId('precommit-ack-checkbox').check();
     await expect(page.getByTestId('approve-apply-import-btn')).toBeEnabled();
     await page.getByTestId('approve-apply-import-btn').click();
@@ -81,7 +98,18 @@ test.describe('WP03 S3: Reviewed synthetic data operations, quality inspector, a
 
     await page.getByTestId('build-import-proposal-btn').click();
     await expect(page.getByTestId('planned-import-preview')).toBeVisible();
+
+    // H1 negative assertion on second batch: ack checkbox & apply MUST remain disabled until fresh Rev 1 backup offer
+    await expect(page.getByTestId('precommit-ack-checkbox')).toBeDisabled();
+    await expect(page.getByTestId('approve-apply-import-btn')).toBeDisabled();
+
+    const preBackupSecondPromise = page.waitForEvent('download');
+    await page.getByTestId('offer-precommit-backup-btn').click();
+    const preBackupSecondDownload = await preBackupSecondPromise;
+    expect(preBackupSecondDownload.suggestedFilename()).toMatch(/termforge-pre-import-backup-rev1/i);
+
     await page.getByTestId('precommit-ack-checkbox').check();
+    await expect(page.getByTestId('approve-apply-import-btn')).toBeEnabled();
     await page.getByTestId('approve-apply-import-btn').click();
     await expect(page.getByTestId('import-commit-notice')).toContainText(/library revision 2/i);
 
