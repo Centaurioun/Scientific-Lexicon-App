@@ -6,6 +6,8 @@
 **Execution Order:** A1 → A2 → A3 → A4 → A5 → B1 → B2 → B3 → B4 → B5 → C1 → C2 → C3 → C4 → C5  
 **Current Checkpoint:** **INTEGRATED WP01 COMPLETE (STOP GATE REACHED — NO WP02 / S2–S7 WORK STARTED)**
 
+**Independent Codex review addendum (2026-11-27):** Original author evidence below remains historical and is not independent verification. Local branch `codex/wp01-independent-verification` was based on exact main commit `9379062c5554839286bfb6165ee348358157a1a8`; qualified starter `40045aa056cd0033a8c2d4586ee9f8f5fa703230`. Verified source/test checkpoint: `ce3519a38acbf23b300d7fc9f4d12ad96a259586`. The lockfile hash matched `0fa57c7ce340084716277312ce7e6f7d1b36a134857fde6400c97c4629267033` before and after `npm ci`. The independent full run passed dependency gate 4/4, unit tests 38/38, typecheck, production build, and Playwright 15/15 across 12 E2E specs. Corrections cover multi-operation persistence parity, backup cap symmetry/read-before-reject, actual concurrent write/restore races, indexed/cancellable candidate generation, and stale source invalidation; details are in `docs/evaluation/WP01-INDEPENDENT-QUALIFICATION.md`. **Current G3 verdict is NOT QUALIFIED** because the required input/backup limit configuration/presentation is incomplete and candidate-count limits remain absent without an owner-approved numeric threshold. G4 remains NOT READY; G5 NOT ESTABLISHED. No main merge or WP02 work.
+
 **Environment Record:**
 - Runtime: Google AI Studio container — Node `v22.23.5`, npm `10.9.9`.
 - Dependency graph: Bun-managed `node_modules` (`bun.lock` present); authoritative `package-lock.json` is absent in the AI Studio workspace and was **not** fabricated or regenerated. All 15 qualified direct dependencies/devDependencies in `package.json` remain unchanged at their exact approved versions.
@@ -25,14 +27,14 @@
 | **A5** | S1a | **DONE** | `feat: deliver working bilingual library` | Live Chromium `/library` verified (empty state, EN/TR creation, `PD` homonyms, `user-confirmed` protection, case-sensitive search, reload persistence); Playwright spec `tests/e2e/library-ui.spec.ts` authored for Codex |
 | **B1** | S1b | **DONE** | `feat: add scientific-aware registered matcher` | `tests/unit/matcher.test.ts` (5/5 PASS vs oracle; RED→GREEN); Playwright spec `tests/e2e/matcher-browser.spec.ts` authored |
 | **B2** | S1b | **DONE** | `feat: add local English NLP feature adapter` | `tests/unit/nlp.test.ts` (3/3 PASS; RED→GREEN), acyclic Web Worker split (`wink-core.ts` / `extraction.worker.ts` / `wink-engine.ts`), Playwright spec `tests/e2e/nlp-browser.spec.ts` authored |
-| **B3** | S1b | **DONE** | `feat: discover unknown scientific candidates locally` | `tests/unit/extraction.test.ts` (4/4 PASS including sub-symbol regression; RED→GREEN) |
+| **B3** | S1b | **PARTIAL — independent review** | `feat: discover unknown scientific candidates locally` | Original 4/4 evidence plus independent cancellation/performance regression. Candidate-count limit configuration/display remains missing; see independent report. |
 | **B4** | S1b | **DONE** | `feat: deliver candidate review and approval flow` | Live Chromium `/extraction` verified (Wink + Aho–Corasick known/ambiguous/new classification, context pinning, `CD4+` approval); Playwright spec `tests/e2e/extraction-review.spec.ts` authored |
 | **B5** | S1b | **DONE** | `feat: protect source text and retention consent` | `tests/unit/retention.test.ts` (2/2 PASS; RED→GREEN), live Chromium session-only reload clear + explicit retain/delete verified; Playwright spec `tests/e2e/retention.spec.ts` authored |
 | **C1** | S1c | **DONE** | `feat: add deterministic scientific presentation exports` | `tests/unit/export.test.ts` (2/2 PASS; RED→GREEN), live Chromium CSV preview verified |
 | **C2** | S1c | **DONE** | `feat: define portable validated library backup` | `tests/unit/backup.test.ts` (2/2 PASS; RED→GREEN) |
 | **C3** | S1c | **DONE** | `feat: restore validated backups atomically into empty library` | `tests/unit/restore-gateway.test.ts` (1/1 PASS; RED→GREEN), Chromium IndexedDB harness `tests/browser/restore-harness.ts` (8/8 PASS) |
 | **C4** | S1c | **DONE** | `feat: deliver export and portable recovery workspace` | Live Chromium `/exchange` verified (CSV/backup downloads, invalid file rejection, non-empty restore refusal, empty-context exact SHA-256 restore); Playwright spec `tests/e2e/export-recovery-ui.spec.ts` authored |
-| **C5** | S1c | **DONE** | `test: verify first slice and record real-data readiness gaps` | `tests/e2e/first-slice.spec.ts`, `tests/e2e/readiness.spec.ts`, `docs/evaluation/S1-ACCEPTANCE.md`, `docs/evaluation/G4-REAL-DATA-READINESS.md`; live Chromium Round 1 + Round 2 full-slice + two-tab stale write verified |
+| **C5** | S1c | **PARTIAL — independent review** | `test: verify first slice and record real-data readiness gaps` | Independent local full suite passes; concurrent two-tab test now overlaps writes. Overall G3 remains NOT QUALIFIED for B3 limit requirement; G4 separately NOT READY. |
 
 ---
 

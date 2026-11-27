@@ -1,5 +1,7 @@
 # S1 Acceptance Evaluation Report — Gate G3 (Synthetic First Slice)
 
+> **Independent qualification addendum (2026-11-27):** The AI Studio implementation ledger and evidence below are author-provided records, not independent verification. See [WP01 independent qualification](WP01-INDEPENDENT-QUALIFICATION.md) for the source revision, corrective regression evidence, exact local command outputs, and independent A1–C5 matrix. Current independent G3 verdict: **NOT QUALIFIED**. The approved S1 requirement for configurable and visible candidate-count limits remains unresolved; no numeric threshold was invented. G4 remains **NOT READY / BLOCKED** and G5 remains **NOT ESTABLISHED**.
+
 **Application:** TermForge (`Centaurioun/Scientific-Lexicon-App`)  
 **Baseline Commit:** `40045aa056cd0033a8c2d4586ee9f8f5fa703230`  
 **Work Package:** WP01 — Complete Core Application Implementation (S1a A1–A5, S1b B1–B5, S1c C1–C5)  
