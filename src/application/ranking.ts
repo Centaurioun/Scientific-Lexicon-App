@@ -2,31 +2,109 @@ import { compareCodeUnits, type Occurrence } from '@/domain/schema';
 import type { CandidateGroup, RankedCandidate, RankMode } from '@/domain/ranking';
 import type { Token } from '@/domain/extraction';
 
+/** Maximum subsequence transition probes permitted during C-value nesting index construction. */
 export const MAX_CVALUE_INDEX_PROBES = 1_000_000;
+
+/**
+ * Maximum conservative length- and escape-weighted work units permitted across C-value
+ * preprocessing (token interning + trie insertion), trie traversal, and containment edge
+ * recording/sorting. One unit approximates processing one UTF-16 code unit (including
+ * worst-case JSON/escape expansion overhead) or one structural trie/edge operation.
+ */
+export const MAX_CVALUE_WORK_UNITS = 10_000_000;
+
+/** Maximum total distinct (nested-term, container) containment edges permitted in C-value mode. */
+export const MAX_CVALUE_CONTAINER_EDGES = 250_000;
+
+export type RankingWorkloadBoundKind = 'work-units' | 'probes' | 'container-edges';
+
+export interface CValueWorkMetrics {
+  probes: number;
+  tokenSteps: number;
+  textUnits: number;
+  containerEdges: number;
+  workUnits: number;
+}
 
 export class RankingWorkloadExceededError extends Error {
   readonly probes: number;
+  readonly workUnits: number;
+  readonly containerEdges: number;
   readonly limit: number;
+  readonly boundKind: RankingWorkloadBoundKind;
 
-  constructor(probes: number, limit: number) {
+  constructor(
+    metrics: CValueWorkMetrics,
+    limit: number,
+    boundKind: RankingWorkloadBoundKind = 'work-units',
+  ) {
+    const label =
+      boundKind === 'work-units'
+        ? `${limit.toLocaleString('en-US')} length-weighted work units`
+        : boundKind === 'container-edges'
+          ? `${limit.toLocaleString('en-US')} containment edges`
+          : `${limit.toLocaleString('en-US')} subsequence probes`;
     super(
-      `C-value nested-container indexing exceeded the safe work bound (${limit.toLocaleString('en-US')} subsequence probes). Ranking was aborted without partial results; switch to source-order or frequency ranking or reduce candidate cardinality.`,
+      `C-value nested-container indexing exceeded the safe work bound (${label}). Ranking was aborted without partial results; switch to source-order or frequency ranking or reduce candidate cardinality.`,
     );
     this.name = 'RankingWorkloadExceededError';
-    this.probes = probes;
+    this.probes = metrics.probes;
+    this.workUnits = metrics.workUnits;
+    this.containerEdges = metrics.containerEdges;
     this.limit = limit;
+    this.boundKind = boundKind;
   }
 }
 
 export interface RankCandidatesOptions {
   maxIndexProbes?: number;
+  maxWorkUnits?: number;
+  maxContainerEdges?: number;
   signal?: AbortSignal;
+  /** Optional deterministic work-counter observer for testing and diagnostics. */
+  onWorkMetrics?: (metrics: CValueWorkMetrics) => void;
 }
 
 function throwIfRankingAborted(signal?: AbortSignal): void {
   if (signal?.aborted) {
     throw new DOMException('Candidate ranking was aborted.', 'AbortError');
   }
+}
+
+function assertPositiveSafeIntegerOption(name: string, value: number | undefined, fallback: number): number {
+  if (value === undefined) return fallback;
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new RangeError(`${name} must be a positive safe integer.`);
+  }
+  return value;
+}
+
+/**
+ * Conservative serialized text cost for a single token: UTF-16 length plus worst-case
+ * escape expansion (`"` / `\` add 1 char; control chars < 0x20 add 5 chars for `\u00xx`)
+ * plus 2 structural delimiter units. Guarantees long or escape-heavy tokens are billed
+ * proportionally to actual text/escaping cost.
+ */
+function conservativeTokenTextUnits(token: string): number {
+  let extra = 2;
+  for (let i = 0; i < token.length; i += 1) {
+    const code = token.charCodeAt(i);
+    if (code === 0x22 || code === 0x5c) {
+      extra += 1;
+    } else if (code < 0x20) {
+      extra += 5;
+    }
+  }
+  return token.length + extra;
+}
+
+interface TrieNode {
+  children: Map<number, TrieNode>;
+  tokenSeqId: number;
+}
+
+function createTrieNode(): TrieNode {
+  return { children: new Map<number, TrieNode>(), tokenSeqId: -1 };
 }
 
 export function tokenizeSurfaceForRanking(surface: string): string[] {
@@ -121,7 +199,7 @@ function extractExactNlpTokensForOccurrence(
  * occurrences of that surface:
  * 1. Prefer exact full-coverage NLP tokenizations over whitespace fallbacks.
  * 2. Among equal-quality tokenizations, pick the highest occurrence count.
- * 3. Deterministic tie-break: longer token count, then binary UTF-16 JSON key order.
+ * 3. Deterministic tie-break: longer token count, then binary UTF-16 token sequence order.
  */
 function resolveDeterministicSurfaceTokens(
   occurrences: readonly Occurrence[],
@@ -132,20 +210,38 @@ function resolveDeterministicSurfaceTokens(
 
   for (const occ of occurrences) {
     const exactNlp = extractExactNlpTokensForOccurrence(occ, orderedTokens);
-    const tokens = exactNlp ?? tokenizeSurfaceForRanking(occ.surface);
     const nlpExact = exactNlp !== null;
-    const key = `${nlpExact ? '1' : '0'}:${JSON.stringify(tokens)}`;
 
     let surfaceVotes = votesBySurface.get(occ.surface);
     if (!surfaceVotes) {
       surfaceVotes = new Map<string, Vote>();
       votesBySurface.set(occ.surface, surfaceVotes);
     }
+
+    // Fallback whitespace tokenization is deterministic per surface; avoid repeated JSON.stringify
+    // allocation for identical fallback surfaces.
+    if (!nlpExact) {
+      const fallbackKey = '0:fallback';
+      const existing = surfaceVotes.get(fallbackKey);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        surfaceVotes.set(fallbackKey, {
+          tokens: tokenizeSurfaceForRanking(occ.surface),
+          nlpExact: false,
+          count: 1,
+          key: fallbackKey,
+        });
+      }
+      continue;
+    }
+
+    const key = `1:${JSON.stringify(exactNlp)}`;
     const existing = surfaceVotes.get(key);
     if (existing) {
       existing.count += 1;
     } else {
-      surfaceVotes.set(key, { tokens, nlpExact, count: 1, key });
+      surfaceVotes.set(key, { tokens: exactNlp, nlpExact: true, count: 1, key });
     }
   }
 
@@ -272,6 +368,24 @@ export function rankCandidates(
   throwIfRankingAborted(options.signal);
   if (occurrences.length === 0) return [];
 
+  // Validate numeric budget options upfront in C-value mode so non-finite/negative limits fail closed.
+  const maxProbes =
+    rankMode === 'c-value'
+      ? assertPositiveSafeIntegerOption('maxIndexProbes', options.maxIndexProbes, MAX_CVALUE_INDEX_PROBES)
+      : MAX_CVALUE_INDEX_PROBES;
+  const maxWorkUnits =
+    rankMode === 'c-value'
+      ? assertPositiveSafeIntegerOption('maxWorkUnits', options.maxWorkUnits, MAX_CVALUE_WORK_UNITS)
+      : MAX_CVALUE_WORK_UNITS;
+  const maxContainerEdges =
+    rankMode === 'c-value'
+      ? assertPositiveSafeIntegerOption(
+          'maxContainerEdges',
+          options.maxContainerEdges,
+          MAX_CVALUE_CONTAINER_EDGES,
+        )
+      : MAX_CVALUE_CONTAINER_EDGES;
+
   const orderedTokens =
     sourceTokens.length > 0
       ? [...sourceTokens].sort((a, b) => a.start - b.start || a.end - b.end)
@@ -282,98 +396,162 @@ export function rankCandidates(
   const groups = buildCandidateGroups(occurrences, resolvedTokensBySurface);
   throwIfRankingAborted(options.signal);
 
-  // Build C-value subsequence containment index ONLY when rankMode === 'c-value'.
+  // Build exact Token-ID Trie & C-value containment index ONLY when rankMode === 'c-value'.
   // In source-order and frequency modes, zero container indexing or intermediate allocation runs.
-  let containersByTokenSequence:
-    | Map<string, Array<{ surface: string; frequency: number }>>
-    | null = null;
+  let tokenSeqIdBySurface: Map<string, number> | null = null;
+  let containersBySeqId: Array<Array<{ surface: string; frequency: number }>> | null = null;
 
   if (rankMode === 'c-value') {
-    const surfaceTypes = new Map<string, { tokens: string[]; frequency: number }>();
+    const metrics: CValueWorkMetrics = {
+      probes: 0,
+      tokenSteps: 0,
+      textUnits: 0,
+      containerEdges: 0,
+      workUnits: 0,
+    };
+
+    const debitWork = (stepCost: number, textCost: number): void => {
+      if (!Number.isSafeInteger(stepCost) || stepCost < 0 || !Number.isSafeInteger(textCost) || textCost < 0) {
+        throw new RankingWorkloadExceededError(metrics, maxWorkUnits, 'work-units');
+      }
+      if (textCost > maxWorkUnits - stepCost) {
+        throw new RankingWorkloadExceededError(metrics, maxWorkUnits, 'work-units');
+      }
+      const delta = stepCost + textCost;
+      if (delta > maxWorkUnits - metrics.workUnits) {
+        metrics.workUnits = maxWorkUnits + 1;
+        throw new RankingWorkloadExceededError(metrics, maxWorkUnits, 'work-units');
+      }
+      metrics.tokenSteps += stepCost;
+      metrics.textUnits += textCost;
+      metrics.workUnits += delta;
+    };
+
+    const surfaceTypes = new Map<
+      string,
+      {
+        tokens: string[];
+        tokenIds: number[];
+        frequency: number;
+        surfaceTextWeight: number;
+      }
+    >();
+    const tokenToId = new Map<string, number>();
+    const tokenWeightById: number[] = [];
+
+    // Phase A: Intern unique tokens and build exact integer-keyed Token-ID Trie for all multiword terms.
+    // Zero per-probe slice() or JSON.stringify() allocation is performed during containment search.
+    const trieRoot = createTrieNode();
+    tokenSeqIdBySurface = new Map<string, number>();
+    containersBySeqId = [];
+
     for (const group of groups) {
       const existing = surfaceTypes.get(group.surface);
       if (existing) {
         existing.frequency += group.frequency;
-      } else {
-        surfaceTypes.set(group.surface, {
-          tokens: resolvedTokensBySurface.get(group.surface) ?? tokenizeSurfaceForRanking(group.surface),
-          frequency: group.frequency,
-        });
+        continue;
+      }
+
+      const tokens = resolvedTokensBySurface.get(group.surface) ?? tokenizeSurfaceForRanking(group.surface);
+      const tokenIds = new Array<number>(tokens.length);
+      let surfaceTextWeight = 0;
+
+      for (let i = 0; i < tokens.length; i += 1) {
+        const tok = tokens[i];
+        let id = tokenToId.get(tok);
+        let tokWeight: number;
+        if (id === undefined) {
+          tokWeight = conservativeTokenTextUnits(tok);
+          debitWork(1, tokWeight);
+          id = tokenWeightById.length;
+          tokenToId.set(tok, id);
+          tokenWeightById.push(tokWeight);
+        } else {
+          tokWeight = tokenWeightById[id];
+          debitWork(1, tokWeight);
+        }
+        tokenIds[i] = id;
+        surfaceTextWeight += tokWeight;
+      }
+
+      surfaceTypes.set(group.surface, {
+        tokens,
+        tokenIds,
+        frequency: group.frequency,
+        surfaceTextWeight,
+      });
+
+      if (tokens.length >= 2) {
+        let node = trieRoot;
+        for (let i = 0; i < tokenIds.length; i += 1) {
+          const id = tokenIds[i];
+          debitWork(1, tokenWeightById[id]);
+          let next = node.children.get(id);
+          if (!next) {
+            next = createTrieNode();
+            node.children.set(id, next);
+          }
+          node = next;
+        }
+        if (node.tokenSeqId === -1) {
+          node.tokenSeqId = containersBySeqId.length;
+          containersBySeqId.push([]);
+        }
+        tokenSeqIdBySurface.set(group.surface, node.tokenSeqId);
       }
     }
 
-    // Index only exact multiword candidate token sequences that exist in this run,
-    // keyed by (firstToken -> targetLengths) and (length -> exact JSON sequence keys).
-    // This supports arbitrary-length registered/pack expressions accurately without O(L²) bloat.
-    const candidateKeysByLength = new Map<number, Set<string>>();
-    const targetLengthsByFirstToken = new Map<string, number[]>();
-    const targetLengthSetsByFirstToken = new Map<string, Set<number>>();
-
-    for (const info of surfaceTypes.values()) {
-      const len = info.tokens.length;
-      if (len < 2) continue;
-      const key = JSON.stringify(info.tokens);
-      let keySet = candidateKeysByLength.get(len);
-      if (!keySet) {
-        keySet = new Set<string>();
-        candidateKeysByLength.set(len, keySet);
-      }
-      keySet.add(key);
-
-      const firstTok = info.tokens[0];
-      let lenSet = targetLengthSetsByFirstToken.get(firstTok);
-      if (!lenSet) {
-        lenSet = new Set<number>();
-        targetLengthSetsByFirstToken.set(firstTok, lenSet);
-      }
-      lenSet.add(len);
-    }
-
-    for (const [tok, lenSet] of targetLengthSetsByFirstToken.entries()) {
-      targetLengthsByFirstToken.set(
-        tok,
-        Array.from(lenSet).sort((a, b) => a - b),
-      );
-    }
-
-    const maxProbes = options.maxIndexProbes ?? MAX_CVALUE_INDEX_PROBES;
-    let probes = 0;
-    containersByTokenSequence = new Map<string, Array<{ surface: string; frequency: number }>>();
-
+    // Phase B: Walk each container (len >= 3) through the exact Token-ID Trie.
     for (const [surface, info] of surfaceTypes.entries()) {
       throwIfRankingAborted(options.signal);
-      const containerLen = info.tokens.length;
+      const containerLen = info.tokenIds.length;
       if (containerLen < 3) continue; // Strict container of a multiword term (len >= 2) needs >= 3 tokens
 
-      const sequencesInContainer = new Set<string>();
+      const seenSeqIds = new Set<number>();
       for (let start = 0; start < containerLen - 1; start += 1) {
-        const candidateLens = targetLengthsByFirstToken.get(info.tokens[start]);
-        if (!candidateLens) continue;
+        const startTokenId = info.tokenIds[start];
+        let node = trieRoot.children.get(startTokenId);
+        if (!node) continue;
 
-        for (let k = 0; k < candidateLens.length; k += 1) {
-          const len = candidateLens[k];
-          if (len >= containerLen || start + len > containerLen) break;
+        const maxEnd = start === 0 ? containerLen - 2 : containerLen - 1;
+        for (let end = start + 1; end <= maxEnd; end += 1) {
+          const tokenId = info.tokenIds[end];
 
-          probes += 1;
-          if (probes > maxProbes) {
-            throw new RankingWorkloadExceededError(probes, maxProbes);
+          // Preflight probes and length-/escape-weighted work BEFORE descending trie edge.
+          metrics.probes += 1;
+          if (metrics.probes > maxProbes) {
+            throw new RankingWorkloadExceededError(metrics, maxProbes, 'probes');
           }
-          if ((probes & 4095) === 0) {
+          const stepTextWeight =
+            end === start + 1
+              ? tokenWeightById[startTokenId] + tokenWeightById[tokenId]
+              : tokenWeightById[tokenId];
+          debitWork(1, stepTextWeight);
+
+          if ((metrics.probes & 4095) === 0) {
             throwIfRankingAborted(options.signal);
           }
 
-          const subseqKey = JSON.stringify(info.tokens.slice(start, start + len));
-          if (!candidateKeysByLength.get(len)?.has(subseqKey)) continue;
-          if (sequencesInContainer.has(subseqKey)) continue;
-          sequencesInContainer.add(subseqKey);
+          node = node.children.get(tokenId);
+          if (!node) break;
 
-          const containers = containersByTokenSequence.get(subseqKey);
-          const container = { surface, frequency: info.frequency };
-          if (containers) containers.push(container);
-          else containersByTokenSequence.set(subseqKey, [container]);
+          if (node.tokenSeqId !== -1 && !seenSeqIds.has(node.tokenSeqId)) {
+            seenSeqIds.add(node.tokenSeqId);
+
+            // Preflight result-edge amplification & output surface sort cost BEFORE allocating edge.
+            metrics.containerEdges += 1;
+            if (metrics.containerEdges > maxContainerEdges) {
+              throw new RankingWorkloadExceededError(metrics, maxContainerEdges, 'container-edges');
+            }
+            debitWork(2, info.surfaceTextWeight);
+
+            containersBySeqId[node.tokenSeqId].push({ surface, frequency: info.frequency });
+          }
         }
       }
     }
+
+    options.onWorkMetrics?.({ ...metrics });
   }
 
   throwIfRankingAborted(options.signal);
@@ -439,7 +617,8 @@ export function rankCandidates(
       };
     }
 
-    const containers = [...(containersByTokenSequence?.get(JSON.stringify(tokens)) ?? [])];
+    const seqId = tokenSeqIdBySurface?.get(group.surface);
+    const containers = seqId !== undefined && containersBySeqId ? [...containersBySeqId[seqId]] : [];
     containers.sort((a, b) => compareCodeUnits(a.surface, b.surface));
     const nestedCount = containers.length;
     const nestedFreqSum = containers.reduce((sum, item) => sum + item.frequency, 0);

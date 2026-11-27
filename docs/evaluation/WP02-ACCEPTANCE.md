@@ -40,3 +40,16 @@ Historical Sections 1–3 above are preserved unchanged. Following verified appl
 - **Unchanged Gate Boundaries:** D3 DOCX `BLOCKED—CONDITIONAL/EXCLUDED`; G4 `NOT READY`; G5 `NOT ESTABLISHED`; release `NOT APPROVED`; WP03 untouched.
 - **Closure Verdict:** **`IMPLEMENTED — INDEPENDENT QUALIFICATION PENDING`** — full matrix and raw evidence recorded in [WP02 AI Studio Closure Report](WP02-AI-STUDIO-CLOSURE.md).
 
+---
+
+## 5. Final Hardening Addendum (`FH01–FH04`, 2026-11-27)
+
+Historical Sections 1–4 above are preserved unchanged. Following native GitHub Actions execution on checkpoint `2db2ec69f79dc82b177fa86b19fe9cf35ac699ab` (recorded in [WP02 Native CI](WP02-NATIVE-CI.md)), targeted final hardening tasks `FH01`–`FH04` (`docs/handoffs/WP02-FINAL-HARDENING.md`) were executed in AI Studio on application baseline `bb31ad240a8c442c8ec59366b478317944015b2b` without reapplying the historical Codex transfer:
+
+- **FH01 (Revision Notification Reconciliation):** Implemented `RevisionReconciliationController` in `src/features/extraction/concurrency-controller.ts` and wired it into `ExtractionWorkspace.tsx` so revision notifications arriving during in-flight commits or post-commit snapshot loads are deferred and coalesced losslessly, `conflict`/`stale`/error outcomes reload the authoritative snapshot and invalidate the matcher, and newer open proposals (with paired `retainMeta`) are preserved if current or explicitly invalidated if stale (`tests/unit/ui-concurrency.test.ts` **7/7 PASS** + live Chromium IndexedDB `STALE` conflict reconciliation verified).
+- **FH02 (Bounded C-Value Workload):** Replaced per-probe `slice` + `JSON.stringify` hashing in `src/application/ranking.ts` with an exact integer Token-ID Trie and overflow-safe length- and escape-weighted work budgets (`MAX_CVALUE_WORK_UNITS = 10_000_000`, `MAX_CVALUE_CONTAINER_EDGES = 250_000`, `MAX_CVALUE_INDEX_PROBES = 1_000_000`) plus one-click fallback buttons in `ExtractionWorkspace.tsx` (`tests/unit/ranking.test.ts` **13/13 PASS**).
+- **FH03 (Dictionary Digest Erratum):** Recorded explicit erratum in Section 12.1 of `docs/evaluation/WP02-AI-STUDIO-CLOSURE.md` clarifying that `verifyApprovedSyntheticDictionaryPack` verifies the SHA-256 digest of `canonicalJson(pack)` after strict byte-ceiling, fatal UTF-8, and v1 schema validation (`tests/unit/dictionary-pack.test.ts` **9/9 PASS**).
+- **FH04 (Verification & Verdict):** `npm run typecheck` PASS; `npm run test` **24 files / 114 tests PASS**; 6-way factorial synthetic comparison unchanged (`s2-comparison.test.ts` 1/1 PASS); Next.js production build PASS; live headless Chromium check PASS (`0` console errors, `0` external requests). Native `npm run test:gate` and native Playwright suites (`28` E2E + `2` production tests) will re-execute on GitHub Actions after manual owner sync.
+- **Current Verdict:** **`IMPLEMENTED — FINAL NATIVE VERIFICATION PENDING`** — full details in [WP02 Final Hardening Report](WP02-FINAL-HARDENING.md).
+
+

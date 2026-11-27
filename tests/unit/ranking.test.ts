@@ -396,4 +396,91 @@ describe('D5: Session corpus statistics and canonical C-value ranking', () => {
     )!;
     expect(alphaBetaKnown.score!).toBeLessThan(0);
   });
+
+  it('FH02: distinguishes many short probes from fewer long escape-sensitive probes and enforces length-weighted work and edge bounds deterministically', () => {
+    // 1. Short-token workload: 20 nested 2-to-4 token phrases with 2-char tokens
+    const shortOccs: Occurrence[] = [];
+    for (let i = 0; i < 20; i += 1) {
+      shortOccs.push(makeOccurrence(`s-sub-${i}`, i * 20, `a${i} b${i}`));
+      shortOccs.push(makeOccurrence(`s-con-${i}`, 500 + i * 30, `p0 a${i} b${i} q0`));
+    }
+    let shortMetrics: { probes: number; workUnits: number; containerEdges: number } | null = null;
+    rankCandidates(shortOccs, 'c-value', [], {
+      onWorkMetrics: (m) => {
+        shortMetrics = m;
+      },
+    });
+    expect(shortMetrics).not.toBeNull();
+
+    // 2. Fewer probes but long escape-sensitive tokens (quotes & backslashes), strictly inside 200,000 UTF-16 chars and <= 10,000 spans
+    const heavyToken = (idx: number) => `\\"seq_${idx}_${'A\\"\\\\'.repeat(30)}\\"`;
+    const longOccs: Occurrence[] = [];
+    let offset = 0;
+    const sharedPrefix = Array.from({ length: 12 }, (_, t) => heavyToken(t));
+    for (let len = 2; len <= 12; len += 1) {
+      const surface = sharedPrefix.slice(0, len).join(' ');
+      longOccs.push(makeOccurrence(`l-${len}`, offset, surface));
+      offset += surface.length + 2;
+    }
+    expect(offset).toBeLessThan(200_000);
+
+    let longMetrics: { probes: number; workUnits: number; containerEdges: number } | null = null;
+    const longRanked = rankCandidates(longOccs, 'c-value', [], {
+      onWorkMetrics: (m) => {
+        longMetrics = m;
+      },
+    });
+    expect(longMetrics).not.toBeNull();
+    // Weighted work units MUST reflect actual token length & escape weight, not just probe count
+    expect(longMetrics!.workUnits).toBeGreaterThan(shortMetrics!.workUnits * 10);
+
+    // Exact oracle verification on the long escape-sensitive chain (len=k is nested in len=k+1..12 => 12-k containers)
+    for (let len = 2; len <= 12; len += 1) {
+      const surface = sharedPrefix.slice(0, len).join(' ');
+      const item = longRanked.find((r) => r.group.surface === surface)!;
+      const expectedContainers = 12 - len;
+      expect(item.features.tokenCount).toBe(len);
+      expect(item.features.nestedContainerCount).toBe(expectedContainers);
+      const expectedScore =
+        expectedContainers === 0 ? Math.log2(len) * 1 : Math.log2(len) * (1 - 1);
+      expect(item.score).toBeCloseTo(expectedScore, 10);
+    }
+
+    // 3. Exhausting maxWorkUnits fails closed with RankingWorkloadExceededError even when maxIndexProbes is huge
+    expect(() =>
+      rankCandidates(longOccs, 'c-value', [], {
+        maxIndexProbes: 1_000_000,
+        maxWorkUnits: Math.max(100, Math.floor(longMetrics!.workUnits / 2)),
+      }),
+    ).toThrow(RankingWorkloadExceededError);
+
+    // 4. Exhausting maxContainerEdges fails closed against result-edge amplification
+    expect(() =>
+      rankCandidates(longOccs, 'c-value', [], {
+        maxIndexProbes: 1_000_000,
+        maxWorkUnits: 10_000_000,
+        maxContainerEdges: 5,
+      }),
+    ).toThrow(RankingWorkloadExceededError);
+
+    // 5. Non-finite / negative budget options fail closed instead of silently disabling bounds
+    expect(() =>
+      rankCandidates(longOccs, 'c-value', [], { maxWorkUnits: Number.NaN }),
+    ).toThrow(RangeError);
+    expect(() =>
+      rankCandidates(longOccs, 'c-value', [], { maxWorkUnits: Number.POSITIVE_INFINITY }),
+    ).toThrow(RangeError);
+    expect(() =>
+      rankCandidates(longOccs, 'c-value', [], { maxContainerEdges: -1 }),
+    ).toThrow(RangeError);
+
+    // 6. source-order and frequency remain safe fallbacks without C-value indexing overhead
+    expect(() =>
+      rankCandidates(longOccs, 'source-order', [], { maxWorkUnits: 1, maxContainerEdges: 1 }),
+    ).not.toThrow();
+    expect(() =>
+      rankCandidates(longOccs, 'frequency', [], { maxWorkUnits: 1, maxContainerEdges: 1 }),
+    ).not.toThrow();
+  });
 });
+

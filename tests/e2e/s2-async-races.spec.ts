@@ -163,3 +163,82 @@ test('supports keyboard-only tablist navigation, Escape modal dismissal with foc
   await expect(createBtn).toBeFocused();
 });
 
+test('reconciles a concurrent IndexedDB revision commit when an open approval settles as conflict (FH01)', async ({
+  page,
+}) => {
+  await page.goto('/extraction');
+  await page.locator('#source-text-area').fill(
+    'Periodontal ligament-derived stem cells express TNF-α and Na+/K+-ATPase.',
+  );
+  await page.getByRole('button', { name: 'Analyze locally' }).click();
+  await expect(page.getByTestId('candidate-row').first()).toBeVisible();
+
+  // Open approval dialog at baseLibraryRevision = 0
+  await page.getByRole('button', { name: 'Create concept' }).first().click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+
+  // Simulate another local write advancing IndexedDB libraryRevision to 1 while the modal is open
+  // without firing the instance-local subscribeRevision listener until commit settles
+  await page.evaluate(async () => {
+    const req = indexedDB.open('termforge-library-v1');
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const now = new Date().toISOString();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(
+        ['meta', 'concepts', 'expressions', 'provenance', 'batches', 'audit'],
+        'readwrite',
+      );
+      tx.objectStore('meta').put({ key: 'library', schemaVersion: 1, libraryRevision: 1 });
+      tx.objectStore('concepts').put({ id: 'ext-c-1', revision: 0, createdAt: now, updatedAt: now });
+      tx.objectStore('expressions').put({
+        id: 'ext-e-1',
+        conceptId: 'ext-c-1',
+        revision: 0,
+        text: 'ExternalConcurrentTerm',
+        language: { kind: 'language', tag: 'en' },
+        role: 'preferred',
+        createdAt: now,
+        updatedAt: now,
+      });
+      tx.objectStore('provenance').put({
+        id: 'ext-p-1',
+        expressionId: 'ext-e-1',
+        kind: 'manual',
+        createdAt: now,
+        source: null,
+      });
+      tx.objectStore('batches').put({
+        batchId: 'ext-batch-1',
+        digest: 'b'.repeat(64),
+        appliedRevision: 1,
+      });
+      tx.objectStore('audit').put({
+        id: 'ext-a-1',
+        batchId: 'ext-batch-1',
+        opId: 'ext-op-1',
+        kind: 'createConcept',
+        recordIds: ['ext-c-1', 'ext-e-1', 'ext-p-1'],
+        actor: 'local-user',
+        approvedAt: now,
+        appliedRevision: 1,
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  });
+
+  // Attempting to approve the stale baseLibraryRevision=0 proposal fails closed with STALE,
+  // dismisses the stale modal, reloads the authoritative Rev 1 snapshot, and warns that the run is stale!
+  await dialog.getByRole('button', { name: 'Approve and save' }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(page.getByTestId('header-revision')).toContainText('Rev 1');
+  await expect(page.locator('main')).toContainText(/STALE:/);
+  await expect(page.locator('main')).toContainText(/This extraction run reflects Rev 0, while your library is now at Rev 1/);
+});
+
+

@@ -250,4 +250,53 @@ describe('D6: Local dictionary pack staging, validation, and read-only lookup', 
       clearSessionDictionaryPack();
     }
   });
+
+  it('FH03: verifies canonical JSON semantic digest (accepts equivalent key-order/whitespace formatting, rejects entry-order or value tampering)', async () => {
+    const base = createValidSyntheticPackPayload();
+    // Reorder object keys and pretty-print with CRLF + trailing whitespace: different raw bytes, identical canonical JSON
+    const reorderedEquivalent = {
+      entries: base.entries.map((entry) => ({
+        externalId: entry.externalId,
+        language: entry.language,
+        text: entry.text,
+        id: entry.id,
+      })),
+      source: {
+        license: base.source.license,
+        release: base.source.release,
+        uri: base.source.uri,
+        authority: base.source.authority,
+      },
+      name: base.name,
+      id: base.id,
+      version: base.version,
+      format: base.format,
+    };
+    const prettyText = `${JSON.stringify(reorderedEquivalent, null, 4).replaceAll('\n', '\r\n')}\r\n  `;
+    const compactText = JSON.stringify(base);
+    expect(prettyText).not.toBe(compactText);
+
+    const makeTextFile = (raw: string) => {
+      const bytes = new TextEncoder().encode(raw);
+      return {
+        size: bytes.byteLength,
+        async arrayBuffer() {
+          return bytes.slice().buffer;
+        },
+      };
+    };
+
+    // Equivalent serialization formatting activates cleanly because canonical JSON SHA-256 matches
+    const loaded = await readDictionaryPackFile(makeTextFile(prettyText));
+    expect(loaded.id).toBe('pack-synth-bio-v1');
+    expect(loaded.entries).toHaveLength(4);
+
+    // Semantic tampering: swapping array order in entries changes canonical JSON and MUST fail closed
+    const reorderedEntries = createValidSyntheticPackPayload();
+    reorderedEntries.entries = [reorderedEntries.entries[1], reorderedEntries.entries[0], ...reorderedEntries.entries.slice(2)];
+    await expect(readDictionaryPackFile(makeTextFile(JSON.stringify(reorderedEntries)))).rejects.toThrow(
+      DictionaryPackPolicyError,
+    );
+  });
 });
+

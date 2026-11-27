@@ -277,3 +277,20 @@ Re-executed `tests/unit/s2-comparison.test.ts` after all QC01–QC08 remediation
   3. UI dictionary pack loading is strictly restricted to the allowlisted synthetic fixture manifest (`wp02-synthetic-allowlist-v1`); real dictionary onboarding requires future rights clearance and owner policy approval.
   4. D3 DOCX remains `BLOCKED`, G4 remains `NOT READY`, G5 remains `NOT ESTABLISHED`.
 - **Required Next Action:** Owner manually syncs these changes to GitHub while preserving the authoritative `package-lock.json` (`0fa57c7ce340084716277312ce7e6f7d1b36a134857fde6400c97c4629267033`), then runs independent native qualification (`npm ci`, `npm run test:gate`, `npm run typecheck`, `npm run test`, `npm run build`, `npm run test:e2e`, `npm audit`). Stop cleanly before WP03.
+
+---
+
+## 12. Erratum & Final Hardening Addendum (`FH01–FH04`, 2026-11-27)
+
+Historical Sections 1–11 above are preserved unchanged.
+
+### 12.1 FH03 Erratum — Canonical JSON Semantic Content Digest vs. Raw File-Byte Digest
+- **Correction:** Section 5 (`QC01 — Synthetic Dictionary Boundary`, line 141) above stated that allowlist verification checks the SHA-256 content digest *"over raw UTF-8 bytes before activation"*. That phrasing is inaccurate and is hereby corrected:
+  1. `readDictionaryPackFile` (`src/application/dictionary-pack-file.ts`) first enforces the pre-read file byte ceiling (`MAX_DICTIONARY_PACK_BYTES = 2,097,152`), decodes strict UTF-8 (`TextDecoder('utf-8', { fatal: true })`), and validates the strict v1 `DictionaryPack` Zod schema (`parseDictionaryPackJson`).
+  2. `verifyApprovedSyntheticDictionaryPack` (`src/domain/synthetic-dictionary-manifest.ts`) then computes `digest(pack)` (`src/domain/changes.ts`), which hashes the **UTF-8 bytes of `canonicalJson(pack)`** (sorted object keys, preserved array ordering, no insignificant whitespace) via Web Crypto `SHA-256` and compares it against the allowlisted `contentSha256` in `APPROVED_SYNTHETIC_DICTIONARY_PACKS`.
+- **Semantic vs. Byte-Identity Distinction:** This verifies **semantic canonical JSON content equivalence** (after strict UTF-8 and schema validation), not raw file byte-for-byte identity. Equivalent JSON formatting (e.g., pretty-printed indentation, CRLF vs. LF line endings, or reordered object properties) produces the identical canonical JSON SHA-256 digest and is accepted, whereas any semantic content modification (e.g., 1-character entry change, metadata change, or reordered `entries` array) produces a different canonical JSON SHA-256 digest and fails closed with `DictionaryPackPolicyError`.
+- **Unchanged Policy Boundary:** The allowlist (`wp02-synthetic-allowlist-v1`) and its four SHA-256 digests are unchanged. This bounded allowlist enforces synthetic-only qualification and does not provide legal rights or authenticity verification for third-party dictionaries; real packs remain blocked.
+
+### 12.2 FH01–FH04 Final Hardening Summary
+See [WP02 Final Hardening Report](WP02-FINAL-HARDENING.md) for the complete `FH01–FH04` remediation record, lossless revision reconciliation (`RevisionReconciliationController`), exact Token-ID Trie and length-/escape-weighted C-value work bounds (`MAX_CVALUE_WORK_UNITS`, `MAX_CVALUE_CONTAINER_EDGES`), and updated verification evidence.
+

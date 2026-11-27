@@ -93,3 +93,19 @@ All historical entries above are preserved intact. Pinned Codex transfer `a935c1
 
 - **Current Verdict:** **`IMPLEMENTED — INDEPENDENT QUALIFICATION PENDING`** (AI Studio self-review; D3 `BLOCKED`; G4 `NOT READY`; G5 `NOT ESTABLISHED`; WP03 untouched; owner syncs GitHub manually).
 
+---
+
+## Final Hardening Addendum (`FH01–FH04`, 2026-11-27)
+
+All historical entries above are preserved intact. Executed on application baseline `bb31ad240a8c442c8ec59366b478317944015b2b` (following native GitHub Actions verification checkpoint `2db2ec69f79dc82b177fa86b19fe9cf35ac699ab`, `docs/evaluation/WP02-NATIVE-CI.md`) per `docs/handoffs/WP02-FINAL-HARDENING.md`. The historical Codex transfer was not reapplied.
+
+| Task | Status | Key Artifacts & Verified Evidence |
+| --- | --- | --- |
+| **FH01** | `CLOSED—VERIFIED` | `src/features/extraction/concurrency-controller.ts` (`RevisionReconciliationController`), `src/features/extraction/ExtractionWorkspace.tsx`, `tests/unit/ui-concurrency.test.ts` (**7/7 PASS**), `tests/e2e/s2-async-races.spec.ts` (`5` tests) + live Chromium concurrent IndexedDB `STALE` conflict reconciliation verified. |
+| **FH02** | `CLOSED—VERIFIED` | `src/application/ranking.ts` (exact integer Token-ID Trie + overflow-safe length/escape-weighted work budget `MAX_CVALUE_WORK_UNITS = 10_000_000` and `MAX_CVALUE_CONTAINER_EDGES = 250_000`), `ExtractionWorkspace.tsx` (fallback ranking buttons), `tests/unit/ranking.test.ts` (**13/13 PASS**). |
+| **FH03** | `CLOSED—VERIFIED` | `docs/evaluation/WP02-AI-STUDIO-CLOSURE.md` (Section 12.1 erratum distinguishing canonical JSON semantic SHA-256 digest from raw file bytes), `tests/unit/dictionary-pack.test.ts` (**9/9 PASS**). |
+| **FH04** | `IMPLEMENTED—VERIFICATION BLOCKED (environment)` | `npm run typecheck` PASS; `npm run test` (**24 files / 114 tests PASS**); 6-way factorial comparison unchanged (`s2-comparison.test.ts` 1/1 PASS); production build PASS; live Chromium check PASS (`0` console errors, `0` external requests). Report: `docs/evaluation/WP02-FINAL-HARDENING.md`. |
+
+- **Current Verdict:** **`IMPLEMENTED — FINAL NATIVE VERIFICATION PENDING`** (AI Studio self-review; D3 `BLOCKED`; G4 `NOT READY`; G5 `NOT ESTABLISHED`; release `NOT APPROVED`; stopped before WP03; owner syncs GitHub manually to trigger `.github/workflows/termforge-native-qualification.yml`).
+
+

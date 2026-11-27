@@ -20,7 +20,7 @@ import { readDictionaryPackFile } from '@/application/dictionary-pack-file';
 import { AppHeader } from '@/components/AppHeader';
 import { ChangeApprovalDialog } from '@/components/ChangeApprovalDialog';
 import type { CandidateGrammarMode } from '@/domain/candidate-evidence';
-import type { ChangePayload, ProposedChange } from '@/domain/changes';
+import type { ChangePayload } from '@/domain/changes';
 import {
   type DictionaryPack,
 } from '@/domain/dictionary-pack';
@@ -47,10 +47,10 @@ import {
   setSessionExtractionRun,
 } from './session-run-store';
 import {
-  evaluateCommitSettlement,
+  RevisionReconciliationController,
   shouldApplyProposalResult,
   shouldApplySnapshotLoad,
-  shouldHandleExternalRevision,
+  type PendingProposalEntry,
   type RetainedRunMeta,
 } from './concurrency-controller';
 import { SourceContext } from './SourceContext';
@@ -98,25 +98,24 @@ export function ExtractionWorkspace() {
   const [retentionConsent, setRetentionConsent] = useState(false);
   const [retainedRunLink, setRetainedRunLink] = useState<RetainedRunMeta | null>(null);
 
-  const [pendingProposal, setPendingProposal] = useState<ProposedChange | null>(null);
-  const [pendingRetainMeta, setPendingRetainMeta] = useState<RetainedRunMeta | null>(null);
+  const [pendingEntry, setPendingEntry] = useState<PendingProposalEntry | null>(null);
   const [applying, setApplying] = useState(false);
 
   const nlpRef = useRef<BrowserLocalNlpEngine | null>(null);
   const matcherRef = useRef<RevisionCachedRegisteredMatcher | null>(null);
+  const reconcilerRef = useRef<RevisionReconciliationController | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
   const requestSeqRef = useRef(0);
   const proposalSeqRef = useRef(0);
   const packUploadSeqRef = useRef(0);
   const snapshotLoadSeqRef = useRef(0);
-  const inFlightCommitBatchIdRef = useRef<string | null>(null);
   const activeRunIdRef = useRef<string | null>(run?.id ?? null);
-  const pendingProposalRef = useRef<ProposedChange | null>(pendingProposal);
+  const pendingEntryRef = useRef<PendingProposalEntry | null>(pendingEntry);
   const tabButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   activeRunIdRef.current = run?.id ?? null;
-  pendingProposalRef.current = pendingProposal;
+  pendingEntryRef.current = pendingEntry;
 
   if (!nlpRef.current) {
     nlpRef.current = new BrowserLocalNlpEngine();
@@ -124,8 +123,11 @@ export function ExtractionWorkspace() {
   if (!matcherRef.current) {
     matcherRef.current = new RevisionCachedRegisteredMatcher();
   }
+  if (!reconcilerRef.current) {
+    reconcilerRef.current = new RevisionReconciliationController();
+  }
 
-  const loadSnapshot = useCallback(async () => {
+  const loadSnapshot = useCallback(async (): Promise<LibrarySnapshot | null> => {
     const loadSeq = ++snapshotLoadSeqRef.current;
     setLoadingLibrary(true);
     setStorageError(null);
@@ -133,17 +135,19 @@ export function ExtractionWorkspace() {
       const repo = getBrowserLibraryRepository();
       const loaded = await listLibrary(repo);
       if (!shouldApplySnapshotLoad({ mounted: mountedRef.current, capturedLoadSeq: loadSeq, currentLoadSeq: snapshotLoadSeqRef.current })) {
-        return;
+        return null;
       }
       setSnapshot(loaded);
+      return loaded;
     } catch (error) {
       if (!shouldApplySnapshotLoad({ mounted: mountedRef.current, capturedLoadSeq: loadSeq, currentLoadSeq: snapshotLoadSeqRef.current })) {
-        return;
+        return null;
       }
       setStorageError(
         error instanceof Error ? error.message : 'Unable to open browser IndexedDB library.',
       );
       setSnapshot(null);
+      return null;
     } finally {
       if (shouldApplySnapshotLoad({ mounted: mountedRef.current, capturedLoadSeq: loadSeq, currentLoadSeq: snapshotLoadSeqRef.current })) {
         setLoadingLibrary(false);
@@ -155,8 +159,9 @@ export function ExtractionWorkspace() {
     mountedRef.current = true;
     void loadSnapshot();
     const repo = getBrowserLibraryRepository();
-    const unsub = repo.subscribeRevision(() => {
-      if (!shouldHandleExternalRevision({ inFlightCommitBatchId: inFlightCommitBatchIdRef.current })) {
+    const unsub = repo.subscribeRevision((revision) => {
+      const decision = reconcilerRef.current!.observeRevisionNotification(revision);
+      if (decision.action === 'defer') {
         return;
       }
       matcherRef.current?.invalidate();
@@ -165,8 +170,7 @@ export function ExtractionWorkspace() {
       requestSeqRef.current += 1;
       proposalSeqRef.current += 1;
       setAnalyzing(false);
-      setPendingProposal(null);
-      setPendingRetainMeta(null);
+      setPendingEntry(null);
       setStatusNotice('Library revision changed; active extraction and pending proposals were invalidated.');
       void loadSnapshot();
     });
@@ -206,8 +210,7 @@ export function ExtractionWorkspace() {
     setAnalyzing(false);
     setSourceText(nextText);
     setAnalysisError(null);
-    setPendingProposal(null);
-    setPendingRetainMeta(null);
+    setPendingEntry(null);
     setRetainedRunLink(null);
     setRetentionConsent(false);
     setRetentionTitle('');
@@ -232,8 +235,7 @@ export function ExtractionWorkspace() {
     setSelectedOccurrenceId(null);
     setRejectedIds(new Set());
     setSessionResolvedMap(new Map());
-    setPendingProposal(null);
-    setPendingRetainMeta(null);
+    setPendingEntry(null);
     setRetainedRunLink(null);
     setRetentionConsent(false);
     setAnalysisError(null);
@@ -310,8 +312,7 @@ export function ExtractionWorkspace() {
     setAnalyzing(false);
     setAnalysisError(null);
     setStatusNotice(null);
-    setPendingProposal(null);
-    setPendingRetainMeta(null);
+    setPendingEntry(null);
     setRetainedRunLink(null);
     setRetentionConsent(false);
     setRetentionTitle('');
@@ -356,8 +357,7 @@ export function ExtractionWorkspace() {
     setSelectedOccurrenceId(null);
     setRejectedIds(new Set());
     setSessionResolvedMap(new Map());
-    setPendingProposal(null);
-    setPendingRetainMeta(null);
+    setPendingEntry(null);
     setRetainedRunLink(null);
 
     try {
@@ -511,8 +511,7 @@ export function ExtractionWorkspace() {
       ) {
         return;
       }
-      setPendingProposal(proposal);
-      setPendingRetainMeta(retainMeta);
+      setPendingEntry({ proposal, retainMeta });
     } catch (error) {
       if (
         !shouldApplyProposalResult({
@@ -710,70 +709,49 @@ export function ExtractionWorkspace() {
   };
 
   const handleApproveAndSave = async () => {
-    const proposal = pendingProposal;
-    if (!proposal || inFlightCommitBatchIdRef.current !== null) return;
-    const retainMeta = pendingRetainMeta;
+    const entry = pendingEntryRef.current;
+    const reconciler = reconcilerRef.current;
+    if (!entry || !reconciler || reconciler.isCommitInFlight()) return;
     const commitContextSeq = requestSeqRef.current;
-    const commitBatchId = proposal.payload.batchId;
 
-    inFlightCommitBatchIdRef.current = commitBatchId;
-    setApplying(true);
-    setAnalysisError(null);
-    setStatusNotice(null);
-    try {
-      const repo = getBrowserLibraryRepository();
-      const approval = approveChange(proposal);
-      const result = await applyChange(repo, proposal, approval);
-
-      const isCommittedResult = result.status === 'applied' || result.status === 'replay';
-      const plan = evaluateCommitSettlement({
-        resultStatus: result.status,
-        committedRevision: isCommittedResult ? result.revision : -1,
-        commitBatchId,
-        activePendingBatchId: pendingProposalRef.current?.payload.batchId ?? null,
-        capturedContextSeq: commitContextSeq,
-        currentContextSeq: requestSeqRef.current,
-        activeRunId: activeRunIdRef.current,
-        capturedRetainMeta: retainMeta,
-      });
-
-      if (plan.shouldInvalidateMatcher) {
+    await reconciler.runCommit({
+      proposal: entry.proposal,
+      retainMeta: entry.retainMeta,
+      capturedContextSeq: commitContextSeq,
+      getCurrentContextSeq: () => requestSeqRef.current,
+      getActiveRunId: () => activeRunIdRef.current,
+      getActivePendingEntry: () => pendingEntryRef.current,
+      isMounted: () => mountedRef.current,
+      applyProposal: async () => {
+        const repo = getBrowserLibraryRepository();
+        const approval = approveChange(entry.proposal);
+        return applyChange(repo, entry.proposal, approval);
+      },
+      loadSnapshot,
+      invalidateMatcher: () => {
         matcherRef.current?.invalidate();
-      }
-      if (mountedRef.current && plan.shouldClearPendingProposal) {
-        setPendingProposal((cur) => (cur?.payload.batchId === commitBatchId ? null : cur));
-        setPendingRetainMeta(null);
-      }
-
-      if (isCommittedResult && plan.committed) {
-        if (mountedRef.current && plan.shouldAttachRetainedRunLink && retainMeta) {
-          setRetainedRunLink(retainMeta);
-        }
-        if (plan.shouldReloadSnapshot) {
-          await loadSnapshot();
-        }
+      },
+      abortActiveAnalysis: () => {
+        abortRef.current?.abort();
+        abortRef.current = null;
+        requestSeqRef.current += 1;
         if (mountedRef.current) {
-          setStatusNotice(
-            plan.viewStaleAfterCommit
-              ? `Saved approved change locally (library revision ${result.revision}). Active source view changed while saving; stale run link was not attached.`
-              : `Saved approved change locally (library revision ${result.revision}). Re-analyze if you want matcher states refreshed against the new revision.`,
-          );
+          setAnalyzing(false);
         }
-      } else if (!isCommittedResult && mountedRef.current) {
-        setAnalysisError(`${result.status.toUpperCase()}: ${result.reason}`);
-      }
-    } catch (error) {
-      if (mountedRef.current) {
-        setPendingProposal((cur) => (cur?.payload.batchId === commitBatchId ? null : cur));
-        setPendingRetainMeta(null);
-        setAnalysisError(error instanceof Error ? error.message : 'Unable to apply approved change.');
-      }
-    } finally {
-      inFlightCommitBatchIdRef.current = null;
-      if (mountedRef.current) {
-        setApplying(false);
-      }
-    }
+      },
+      setApplying: (busy) => setApplying(busy),
+      clearPendingIfBatchMatches: (batchId) => {
+        setPendingEntry((cur) => (cur?.proposal.payload.batchId === batchId ? null : cur));
+      },
+      invalidateStalePendingProposal: (reason) => {
+        proposalSeqRef.current += 1;
+        setPendingEntry(null);
+        setStatusNotice(reason);
+      },
+      attachRetainedRunLink: (meta) => setRetainedRunLink(meta),
+      setStatusNotice: (msg) => setStatusNotice(msg),
+      setAnalysisError: (msg) => setAnalysisError(msg),
+    });
   };
 
   const handleFilterTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
@@ -1009,8 +987,26 @@ export function ExtractionWorkspace() {
                 </div>
 
                 {rankingError ? (
-                  <div className="banner banner-error" role="alert">
-                    <strong>Ranking bound exceeded:</strong> {rankingError}
+                  <div className="banner banner-error stack-sm" role="alert">
+                    <div>
+                      <strong>Ranking bound exceeded:</strong> {rankingError}
+                    </div>
+                    <div className="row-inline">
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => setRankMode('source-order')}
+                      >
+                        Switch to source-order
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        onClick={() => setRankMode('frequency')}
+                      >
+                        Switch to frequency
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <CandidateTable
@@ -1156,13 +1152,12 @@ export function ExtractionWorkspace() {
       </main>
 
       <ChangeApprovalDialog
-        proposal={pendingProposal}
+        proposal={pendingEntry?.proposal ?? null}
         busy={applying}
         onApprove={() => void handleApproveAndSave()}
         onCancel={() => {
           proposalSeqRef.current += 1;
-          setPendingProposal(null);
-          setPendingRetainMeta(null);
+          setPendingEntry(null);
         }}
       />
     </>
