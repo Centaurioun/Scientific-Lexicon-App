@@ -1,0 +1,11 @@
+# Native qualification workflow (WP02)
+
+The baseline application checkpoint is `bb31ad240a8c442c8ec59366b478317944015b2b`. This infrastructure-only addition does not alter application source, dependency versions, the lockfile, approved processing limits or existing regression assertions.
+
+The GitHub-hosted Ubuntu 24.04 job runs on main pushes and manual dispatch. Node 22.x is within the approved engine range; actual Node/npm/OS versions and checkout SHA are recorded. Actions are pinned to Git commit IDs resolved from their v4 tags. The job uses read-only repository permission, no deployment, no repository credentials in checkout, and only synthetic test inputs. npm registry and browser dependency downloads are build-time activity, not application document processing.
+
+Required checks: canonical lock SHA before/after, npm ci, dependency gate, typecheck, complete unit suite, production build, locked Chromium installation, native Playwright suite, npm audit at moderate severity, tracked-source integrity. Each executable command's result remains visible; a failing step cannot be concealed by artifact upload. The separate production configuration measures complete 5k/10k S1 repeated-workload output, C-value switching and frame-gap observations on next start, without changing the original native Playwright configuration. It does not establish high-diversity S2 capacity or a performance acceptance threshold. The measurements include automation and browser sampling overhead. Tests, raw logs and traces are retained as Actions artifacts for 14 days.
+
+This is an independent execution environment, not independent code-review certification. A green run does not by itself establish G4/G5/G6 or close the source-review concerns about external revision notification handling during an in-flight commit, and length-weighted C-value cost. Those require focused review/reproduction. D3 DOCX remains disabled/excluded. No WP03 work or release authorization follows automatically. Do not silently update the lock to fix infrastructure failures.
+
+Workflow: `.github/workflows/termforge-native-qualification.yml`. Manual rerun: Actions → TermForge native qualification → Run workflow (main). Review the exact tested commit and individual step outcomes before recording a bounded qualification verdict.

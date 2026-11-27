@@ -1,0 +1,97 @@
+name: TermForge native qualification
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: termforge-native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    name: Native npm, Chromium and production profiling
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CI: "true"
+      NEXT_TELEMETRY_DISABLED: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout exact workflow commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "22.x"
+      - name: Record environment and verify canonical lock
+        id: baseline
+        run: |
+          set -euo pipefail
+          mkdir -p qualification-results
+          {
+            echo "Commit: $(git rev-parse HEAD)"
+            uname -a
+            node --version
+            npm --version
+            sha256sum package-lock.json
+          } | tee qualification-results/environment.txt
+          echo "0fa57c7ce340084716277312ce7e6f7d1b36a134857fde6400c97c4629267033  package-lock.json" | sha256sum --check
+      - name: Install exact npm lock
+        id: install
+        run: npm ci 2>&1 | tee qualification-results/npm-ci.log
+      - name: Native dependency gate
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run test:gate 2>&1 | tee qualification-results/dependency-gate.log
+      - name: TypeScript
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run typecheck 2>&1 | tee qualification-results/typecheck.log
+      - name: Full unit suite
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm run test 2>&1 | tee qualification-results/unit.log
+      - name: Production build
+        id: build
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: NODE_ENV=production npm run build 2>&1 | tee qualification-results/build.log
+      - name: Install locked Playwright Chromium and Linux libraries
+        id: chromium
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: ./node_modules/.bin/playwright install --with-deps chromium 2>&1 | tee qualification-results/chromium-install.log
+      - name: Production browser performance observations
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && steps.chromium.outcome == 'success' }}
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: qualification-results/production-playwright.json
+        run: ./node_modules/.bin/playwright test --config playwright.qualification.config.ts --reporter=list,json 2>&1 | tee qualification-results/production-playwright.log
+      - name: Native Playwright regression suite
+        if: ${{ !cancelled() && steps.chromium.outcome == 'success' }}
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_FILE: qualification-results/native-playwright.json
+        run: npm run test:e2e -- --reporter=list,json 2>&1 | tee qualification-results/native-playwright.log
+      - name: npm vulnerability audit
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: npm audit --audit-level=moderate 2>&1 | tee qualification-results/npm-audit.log
+      - name: Final lock and tracked-source integrity
+        if: ${{ !cancelled() && steps.baseline.outcome == 'success' }}
+        run: |
+          echo "0fa57c7ce340084716277312ce7e6f7d1b36a134857fde6400c97c4629267033  package-lock.json" | sha256sum --check
+          git diff --check
+          # Next may regenerate next-env.d.ts; all other tracked paths must remain unchanged.
+          git diff --exit-code HEAD -- . ':(exclude)next-env.d.ts'
+      - name: Upload synthetic qualification evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: termforge-qualification-${{ github.sha }}
+          path: |
+            qualification-results/
+            test-results/
+          if-no-files-found: warn
+          retention-days: 14
