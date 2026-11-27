@@ -36,3 +36,26 @@
 ## Live Browser Verification Notes (D12)
 - **Round 1** caught route path mismatch in newly authored E2E specs (`/extract` -> `/extraction`, `#expr-text-input` -> `#editor-text-input`, `Preview change`, `Download complete backup (.json)` / `#backup-file-input` / `Confirm atomic restore`), and spotted minor tag spacing + toolbar baseline alignment in `/library`.
 - **Round 2** verified polished `/library` focused concept banner + baseline-aligned toolbar, verified `/extraction` split-view C-value grouping + parser warnings + excluded Markdown ranges + `0` console errors + `0` external network requests, and fixed grouped-card inner table button wrapping so `Create concept` and `Reject` fit cleanly at `1440x900`.
+
+---
+
+## Independent Codex Qualification Addendum (2026-11-27)
+
+Environment: macOS ARM64, Node `v26.12.1`, npm `11.20.0`, Playwright `1.65.1`; branch `codex/wp02-independent-qualification`; source base `2e4a5894e92f3439330aa019d337ac04a08b794f`. Required lock SHA matched before and after remediation. `npm ci` installed the existing lock graph (69 packages added; 0 npm audit advisories); no package or lockfile edit was made.
+
+| Task | Independent status | Evidence / remaining scope |
+|---|---|---|
+| D1 | PASS for reproduction | Pinned WP01/WP02 ancestry verified; original 80 unit tests, dependency gate, typecheck, build, and Playwright rerun. First native browser suite exposed one integrated restore test timing failure. |
+| D2 | PARTIAL | Fixed mixed CRLF/CR/LF splitting; reject out-of-order exclusion metadata and mismatched `ParsedDocument.text`. Exact UTF-16/cross-section/markup adversarial matrix is incomplete. |
+| D3 | BLOCKED | Existing candidate dossier reused; no parser dependency added or enabled. No isolated hostile-archive G1 artifact produced. |
+| D4 | PARTIAL | S1 remains default and baseline tests pass. Full independent adversarial grammar challenge and limit-plus-one/error-path matrix not completed. |
+| D5 | PARTIAL / REMEDIATED FINDINGS | Explicit NLP tokens now drive ranking, view filtering no longer changes corpus scores, subsequence index removes all-pairs type comparison and deduplicates repeated windows per distinct container, and group keys are tuple encoded. Independent pairwise oracle and 5k/10k repeated/diverse timings added. Review RED/GREEN reproduced and fixed a duplicate-container score error. |
+| D6 | PARTIAL / REMEDIATED FINDINGS | Pre-read 2 MiB check, fatal UTF-8 decoding, required URI, shared tracker in both pack modes, and shared per-surface entries. Schema-valid arbitrary packs remain importable; synthetic-only enforcement is unresolved. |
+| D7 | PARTIAL | Browser UI 5k/10k runs and cancellation test passed; complete browser-local stage measurements, high type diversity, pack stress, worker failure/cancellation matrix, and memory/responsiveness audit remain incomplete. |
+| D8 | PARTIAL | File reads, proposals, cancellation status, and revision changes now guard stale completions; out-of-order file completion tested. Independent review found revision invalidation could strand `analyzing`; it now aborts and clears loading state. Pack-clear race, proposal delayed-promise matrix, accessibility, and homonym workflows need broader coverage. |
+| D9 | PASS within existing tests | Literal and case-insensitive lookup E2E passed; no new changes to lookup semantics. |
+| D10 | PARTIAL | Existing unit suite passed; complete independent metric, duplicate, at-k, concept mapping, false-rejection, and leakage audit not completed. |
+| D11 | PASS for bounded synthetic factorial | Replaced confounded evaluation with S1/S2 × source-order/frequency/C-value, identical inputs and warmed NLP. No generalization claim. |
+| D12 | NOT QUALIFIED | Final dependency gate 4/4, unit tests 88/88, typecheck, production build, and Playwright 24/24 pass. Q2/Q4/Q5/Q6/Q7/Q8 mandatory evidence gaps remain. See independent qualification report. |
+
+The Gemini D1–D12 completion entries above are historical claims and are not upgraded to independent PASS by this addendum.

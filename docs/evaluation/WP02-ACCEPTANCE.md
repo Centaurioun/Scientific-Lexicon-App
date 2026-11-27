@@ -22,3 +22,9 @@
 - **Dependency & Lock Discipline:** Exact 15 dependencies in `package.json` unchanged; `package-lock.json` was NOT fabricated or modified.
 - **Local-Only Privacy:** Zero external API calls, zero server document processing, zero analytics/telemetry, zero authentication; verified `0` external network requests in live headless Chromium.
 - **Scope Boundary:** Stopped cleanly before WP03 (no S3 bulk import, S4 AI enrichment, Phrasebank, Turkish NLP, accounts, or cloud storage).
+
+## 3. Independent Native Qualification Addendum (2026-11-27)
+
+The Gemini figures above are preserved as historical implementation evidence. Independent native reproduction on Node `v26.12.1` / npm `11.20.0` found 80/80 unit tests passing initially, but the native Playwright suite exposed a timing defect in the new integrated restore test (it navigated away before waiting for the restore success state). The test was corrected to await the UI confirmation. Independent remediation and final commands are recorded in [WP02 Independent Qualification](WP02-INDEPENDENT-QUALIFICATION.md).
+
+Final independent verification on the remediation tree: dependency gate 4/4; unit tests 88/88; typecheck pass; production build pass; Playwright 24/24. These results qualify only the tested local synthetic scope. They do not clear DOCX G1, synthetic-only pack enforcement, full pipeline browser performance coverage, G4, G5, or release readiness. Final verdict: **NOT QUALIFIED — REMEDIATION REQUIRED** because mandatory tasks remain unresolved.
