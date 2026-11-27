@@ -24,6 +24,18 @@ import {
   parseProcessingLimits,
   type ProcessingLimits,
 } from '@/domain/processing-limits';
+import { isSpanEligibleInDocument, type ParsedDocument } from '@/domain/document-input';
+import type {
+  AcronymExpansionHypothesis,
+  CandidateEvidence,
+  CandidateGrammarMode,
+} from '@/domain/candidate-evidence';
+import {
+  S2_CANDIDATE_GRAMMAR_VERSION,
+  S2ScientificCandidateGenerator,
+} from '@/application/scientific-candidates';
+import { lookupDictionaryPack } from '@/application/dictionary-lookup';
+import type { DictionaryPack, DictionaryPackSuggestion } from '@/domain/dictionary-pack';
 
 export const MAX_TXT_FILE_BYTES = MAX_TXT_INPUT_BYTES;
 export const MAX_TEXT_UTF16_LENGTH = MAX_TEXT_UTF16_CODE_UNITS;
@@ -88,6 +100,9 @@ export class S1CandidateGenerator implements CandidateGenerator {
 
     const addSpan = (start: number, end: number) => {
       if (start < 0 || end <= start || end > text.length) return;
+      if (options.parsedDocument && !isSpanEligibleInDocument(start, end, options.parsedDocument)) {
+        return;
+      }
       const surface = text.slice(start, end);
       if (surface.trim().length === 0 || !HAS_LETTER_RE.test(surface)) return;
       const key = `${start}:${end}`;
@@ -174,10 +189,23 @@ export class S1CandidateGenerator implements CandidateGenerator {
   }
 }
 
+export interface ExtractionStageTimings {
+  matchMs: number;
+  nlpMs: number;
+  candidateGenMs: number;
+  packLookupMs: number;
+  totalMs: number;
+}
+
 export interface AnalyzeTextOptions {
   signal?: AbortSignal;
   candidateGenerator?: CandidateGenerator;
   limits?: ProcessingLimits;
+  grammarMode?: CandidateGrammarMode;
+  parsedDocument?: ParsedDocument;
+  dictionaryPack?: DictionaryPack | null;
+  useDictionaryPackAsDiscoveryHints?: boolean;
+  onStageTimings?: (timings: ExtractionStageTimings) => void;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {
@@ -198,27 +226,66 @@ export async function analyzeText(
   validateInputText(text, limits);
   const occurrenceTracker = new OccurrenceLimitTracker(limits.maxCandidateOccurrences);
 
-  const generator = options.candidateGenerator ?? new S1CandidateGenerator();
+  const grammarMode: CandidateGrammarMode = options.grammarMode ?? 's1-grammar-1';
+  const generator: CandidateGenerator =
+    options.candidateGenerator ??
+    (grammarMode === S2_CANDIDATE_GRAMMAR_VERSION
+      ? new S2ScientificCandidateGenerator()
+      : new S1CandidateGenerator());
 
+  const algorithmVersion =
+    options.candidateGenerator && !options.grammarMode
+      ? EXTRACTION_ALGORITHM_VERSION
+      : `${grammarMode}+${MATCH_BOUNDARY_POLICY}`;
+
+  const totalStart = performance.now();
+  const matchStart = performance.now();
   const matchPromise =
     matcher instanceof RevisionCachedRegisteredMatcher
       ? matcher.matchForRevision(snapshot.libraryRevision, text, snapshot.expressions, {
           occurrenceTracker,
           signal: options.signal,
+          parsedDocument: options.parsedDocument,
         })
-      : matcher.match(text, snapshot.expressions, { occurrenceTracker, signal: options.signal });
+      : matcher.match(text, snapshot.expressions, {
+          occurrenceTracker,
+          signal: options.signal,
+          parsedDocument: options.parsedDocument,
+        });
 
   // Enforce the registered-span portion before tokenization allocates a token
   // array; a match-limit failure therefore short-circuits NLP for this run.
   const knownOccurrences = await matchPromise;
-  throwIfAborted(options.signal);
-  const tokens = await nlp.analyze(text);
+  const matchMs = performance.now() - matchStart;
   throwIfAborted(options.signal);
 
-  const candidateSpans = await generator.generate(text, tokens, {
-    occurrenceTracker,
-    signal: options.signal,
-  });
+  const nlpStart = performance.now();
+  const tokens = await nlp.analyze(text);
+  const nlpMs = performance.now() - nlpStart;
+  throwIfAborted(options.signal);
+
+  const genStart = performance.now();
+  let candidateSpans: Span[];
+  let evidenceBySpan: Map<string, CandidateEvidence> | undefined;
+  let hypotheses: AcronymExpansionHypothesis[] | undefined;
+
+  if (generator instanceof S2ScientificCandidateGenerator) {
+    const detailed = await generator.generateWithEvidence(text, tokens, {
+      occurrenceTracker,
+      signal: options.signal,
+      parsedDocument: options.parsedDocument,
+    });
+    candidateSpans = detailed.spans;
+    evidenceBySpan = detailed.evidenceBySpan;
+    hypotheses = detailed.hypotheses;
+  } else {
+    candidateSpans = await generator.generate(text, tokens, {
+      occurrenceTracker,
+      signal: options.signal,
+      parsedDocument: options.parsedDocument,
+    });
+  }
+  const candidateGenMs = performance.now() - genStart;
   throwIfAborted(options.signal);
 
   const bySpan = new Map<string, Occurrence>();
@@ -243,14 +310,83 @@ export async function analyzeText(
     }
   }
 
+  const packStart = performance.now();
+  let packSuggestionsBySpan: Map<string, DictionaryPackSuggestion[]> | undefined;
+  if (options.dictionaryPack) {
+    const suggestions = await lookupDictionaryPack(text, options.dictionaryPack, {
+      parsedDocument: options.parsedDocument,
+      occurrenceTracker: options.useDictionaryPackAsDiscoveryHints ? occurrenceTracker : undefined,
+      signal: options.signal,
+    });
+    throwIfAborted(options.signal);
+
+    packSuggestionsBySpan = new Map<string, DictionaryPackSuggestion[]>();
+    for (const suggestion of suggestions) {
+      const key = `${suggestion.start}:${suggestion.end}`;
+      const existingList = packSuggestionsBySpan.get(key);
+      if (existingList) {
+        existingList.push(suggestion);
+      } else {
+        packSuggestionsBySpan.set(key, [suggestion]);
+      }
+
+      if (options.useDictionaryPackAsDiscoveryHints) {
+        if (!bySpan.has(key)) {
+          bySpan.set(key, {
+            id: makeOccurrenceId(suggestion.start, suggestion.end),
+            start: suggestion.start,
+            end: suggestion.end,
+            surface: suggestion.surface,
+            expressionIds: [],
+            conceptIds: [],
+            state: 'new-candidate',
+            resolvedConceptId: null,
+          });
+        }
+        if (!evidenceBySpan) {
+          evidenceBySpan = new Map<string, CandidateEvidence>();
+        }
+        const existingEv = evidenceBySpan.get(key);
+        if (existingEv) {
+          if (!existingEv.reasons.includes('dictionary-pack-hint')) {
+            existingEv.reasons.push('dictionary-pack-hint');
+          }
+        } else {
+          evidenceBySpan.set(key, {
+            spanKey: key,
+            start: suggestion.start,
+            end: suggestion.end,
+            surface: suggestion.surface,
+            grammarVersion: grammarMode,
+            reasons: ['dictionary-pack-hint'],
+          });
+        }
+      }
+    }
+  }
+  const packLookupMs = performance.now() - packStart;
+
+  throwIfAborted(options.signal);
   const occurrences = Array.from(bySpan.values()).sort(compareOccurrences);
+  const totalMs = performance.now() - totalStart;
+  options.onStageTimings?.({
+    matchMs,
+    nlpMs,
+    candidateGenMs,
+    packLookupMs,
+    totalMs,
+  });
 
   return {
     id: crypto.randomUUID(),
     text,
-    algorithmVersion: EXTRACTION_ALGORITHM_VERSION,
+    algorithmVersion,
     libraryRevision: snapshot.libraryRevision,
     occurrences,
+    ...(evidenceBySpan ? { evidenceBySpan } : {}),
+    ...(hypotheses ? { hypotheses } : {}),
+    ...(options.parsedDocument ? { parsedDocument: options.parsedDocument } : {}),
+    ...(packSuggestionsBySpan ? { packSuggestionsBySpan } : {}),
   };
 }
 

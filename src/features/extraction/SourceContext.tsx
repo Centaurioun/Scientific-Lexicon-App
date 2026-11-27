@@ -1,11 +1,20 @@
 'use client';
 
+import {
+  formatCandidateReason,
+  type CandidateEvidence,
+} from '@/domain/candidate-evidence';
+import type { DictionaryPackSuggestion } from '@/domain/dictionary-pack';
+import type { ParsedDocument } from '@/domain/document-input';
 import type { Occurrence } from '@/domain/schema';
 
 interface SourceContextProps {
   text: string;
   occurrences: readonly Occurrence[];
   selectedOccurrenceId: string | null;
+  parsedDocument?: ParsedDocument;
+  evidenceBySpan?: ReadonlyMap<string, CandidateEvidence>;
+  packSuggestionsBySpan?: ReadonlyMap<string, DictionaryPackSuggestion[]>;
   onSelectOccurrence: (occurrenceId: string) => void;
 }
 
@@ -90,10 +99,16 @@ export function SourceContext({
   text,
   occurrences,
   selectedOccurrenceId,
+  parsedDocument,
+  evidenceBySpan,
+  packSuggestionsBySpan,
   onSelectOccurrence,
 }: SourceContextProps) {
   const segments = buildDisplaySegments(text, occurrences, selectedOccurrenceId);
   const active = occurrences.find((o) => o.id === selectedOccurrenceId) ?? null;
+  const activeKey = active ? `${active.start}:${active.end}` : null;
+  const activeEvidence = activeKey ? evidenceBySpan?.get(activeKey) : undefined;
+  const activePackSuggestions = activeKey ? packSuggestionsBySpan?.get(activeKey) ?? [] : [];
 
   return (
     <section className="panel sticky-panel stack-md" aria-labelledby="source-context-heading">
@@ -108,6 +123,30 @@ export function SourceContext({
           <span className="tag tag-amber">ambiguous / possible</span>
         </div>
       </div>
+
+      {parsedDocument && (
+        <div className="small muted row-inline" style={{ flexWrap: 'wrap', gap: '0.4rem' }}>
+          <span className="tag tag-mono">Format: {parsedDocument.format}</span>
+          <span className="tag tag-mono">Parser: {parsedDocument.parserVersion}</span>
+          <span className="tag tag-mono">Sections: {parsedDocument.sections.length}</span>
+          <span className="tag tag-mono">
+            Excluded ranges: {parsedDocument.excludedRanges.length}
+          </span>
+        </div>
+      )}
+
+      {parsedDocument && parsedDocument.warnings.length > 0 && (
+        <div className="banner banner-warning" role="status" style={{ marginBottom: 0 }}>
+          <strong>Parser warnings ({parsedDocument.warnings.length}):</strong>
+          <ul style={{ margin: '0.35rem 0 0 1.2rem', padding: 0 }}>
+            {parsedDocument.warnings.map((warning, idx) => (
+              <li key={idx} className="small">
+                {warning}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="source-context-box" data-testid="source-context">
         {segments.map((seg) =>
@@ -152,6 +191,31 @@ export function SourceContext({
               {text.slice(active.end, Math.min(text.length, active.end + 45))}…
             </span>
           </div>
+          {activeEvidence && (
+            <div className="small" style={{ marginTop: '0.4rem' }}>
+              <strong>Evidence ({activeEvidence.grammarVersion}):</strong>{' '}
+              {activeEvidence.reasons.map(formatCandidateReason).join(', ')}
+              {activeEvidence.posPattern ? ` · POS: ${activeEvidence.posPattern}` : ''}
+            </div>
+          )}
+          {activeEvidence?.abbreviationHypothesis && (
+            <div className="small" style={{ marginTop: '0.3rem' }}>
+              <strong>Acronym hypothesis (not canonical):</strong>{' '}
+              <span className="mono">{activeEvidence.abbreviationHypothesis.longForm}</span> ↔{' '}
+              <span className="mono">{activeEvidence.abbreviationHypothesis.acronym}</span>
+            </div>
+          )}
+          {activePackSuggestions.length > 0 && (
+            <div className="small" style={{ marginTop: '0.3rem' }}>
+              <strong>Local pack suggestion (unverified):</strong>{' '}
+              {activePackSuggestions
+                .map(
+                  (s) =>
+                    `${s.packName} (${s.authority}, ${s.release}, ${s.license}) [${s.entries.map((e) => e.externalId ?? e.id).join(', ')}]`,
+                )
+                .join(' · ')}
+            </div>
+          )}
         </div>
       )}
     </section>

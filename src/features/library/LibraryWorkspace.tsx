@@ -5,16 +5,19 @@ import { getBrowserLibraryRepository } from '@/adapters/storage/dexie-library';
 import {
   applyChange,
   approveChange,
-  findExpressions,
+  findHomonymSiblings,
   listLibrary,
+  lookupExpressions,
   proposeChange,
+  type LibraryLanguageFilter,
+  type LookupMode,
 } from '@/application/library';
 import { AppHeader } from '@/components/AppHeader';
 import { ChangeApprovalDialog } from '@/components/ChangeApprovalDialog';
 import type { ChangePayload, ProposedChange } from '@/domain/changes';
 import {
   EXPRESSION_ROLES,
-  languageMatchesFilter,
+  formatLanguageUse,
   type Expression,
   type ExpressionRole,
   type LibrarySnapshot,
@@ -22,7 +25,7 @@ import {
 import { ConceptEditor, type EditorMode } from './ConceptEditor';
 import { ExpressionList } from './ExpressionList';
 
-type LanguageFilter = 'all' | 'en' | 'tr' | 'shared' | 'undetermined';
+type LanguageFilter = LibraryLanguageFilter;
 
 export function LibraryWorkspace() {
   const [snapshot, setSnapshot] = useState<LibrarySnapshot | null>(null);
@@ -33,6 +36,7 @@ export function LibraryWorkspace() {
 
   const [viewMode, setViewMode] = useState<'concepts' | 'expressions'>('concepts');
   const [searchQuery, setSearchQuery] = useState('');
+  const [lookupMode, setLookupMode] = useState<LookupMode>('substring');
   const [languageFilter, setLanguageFilter] = useState<LanguageFilter>('all');
   const [roleFilter, setRoleFilter] = useState<'all' | ExpressionRole>('all');
 
@@ -66,21 +70,35 @@ export function LibraryWorkspace() {
     void loadSnapshot();
   }, [loadSnapshot]);
 
+  // Honor read-only deep navigation /library?concept=<conceptId> from Extraction workbench
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const conceptParam = params.get('concept');
+    if (conceptParam && conceptParam.trim().length > 0) {
+      setSelectedConceptId(conceptParam);
+      setViewMode('concepts');
+    }
+  }, []);
+
   const filteredExpressions = useMemo(() => {
     if (!snapshot) return [];
-    const matched = findExpressions(snapshot, searchQuery);
-    return matched.filter((expr) => {
-      if (languageFilter === 'undetermined') {
-        if (expr.language.kind !== 'undetermined') return false;
-      } else if (!languageMatchesFilter(expr.language, languageFilter)) {
-        return false;
-      }
-      if (roleFilter !== 'all' && expr.role !== roleFilter) {
-        return false;
-      }
-      return true;
+    return lookupExpressions(snapshot, {
+      query: searchQuery,
+      mode: lookupMode,
+      language: languageFilter,
+      role: roleFilter,
     });
-  }, [snapshot, searchQuery, languageFilter, roleFilter]);
+  }, [snapshot, searchQuery, lookupMode, languageFilter, roleFilter]);
+
+  const selectedConceptDetails = useMemo(() => {
+    if (!snapshot || !selectedConceptId) return null;
+    const concept = snapshot.concepts.find((c) => c.id === selectedConceptId);
+    if (!concept) return null;
+    const expressions = snapshot.expressions.filter((e) => e.conceptId === concept.id);
+    const siblings = findHomonymSiblings(snapshot, concept.id);
+    return { concept, expressions, siblings };
+  }, [snapshot, selectedConceptId]);
 
   const handlePropose = async (payload: ChangePayload) => {
     if (!snapshot) return;
@@ -254,11 +272,65 @@ export function LibraryWorkspace() {
           </div>
         )}
 
+        {selectedConceptDetails && (
+          <section
+            className="banner banner-info stack-sm"
+            aria-label="Focused concept inspection"
+            data-testid="focused-concept-banner"
+          >
+            <div className="row-inline" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
+              <div>
+                <strong>Inspecting concept {selectedConceptDetails.concept.id.slice(0, 8)}</strong>{' '}
+                <span className="tag tag-mono">rev {selectedConceptDetails.concept.revision}</span>{' '}
+                <span className="muted small">
+                  (read-only inspection; no automatic link or edit applied)
+                </span>
+              </div>
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => setSelectedConceptId(null)}
+              >
+                Clear focus
+              </button>
+            </div>
+            <div className="row-inline" style={{ flexWrap: 'wrap', gap: '0.35rem' }}>
+              {selectedConceptDetails.expressions.map((expr) => (
+                <span key={expr.id} className="tag" style={{ gap: '0.3rem' }}>
+                  <strong>{expr.text}</strong>
+                  <span>
+                    ({formatLanguageUse(expr.language)} · {expr.role})
+                  </span>
+                </span>
+              ))}
+            </div>
+            {selectedConceptDetails.siblings.length > 0 && (
+              <div className="row-inline small" style={{ flexWrap: 'wrap', gap: '0.4rem' }}>
+                <span className="tag tag-amber">Homonym siblings (distinct concepts):</span>
+                {selectedConceptDetails.siblings.map((sib) => (
+                  <button
+                    key={`${sib.sharedSurface}:${sib.conceptId}`}
+                    type="button"
+                    className="btn btn-sm btn-subtle mono"
+                    onClick={() => setSelectedConceptId(sib.conceptId)}
+                  >
+                    {sib.sharedSurface} → {sib.conceptId.slice(0, 8)}
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        )}
+
         <div className="workbench-grid">
           <section className="panel" aria-label="Library records">
-            <div className="toolbar">
+            <div className="toolbar" style={{ alignItems: 'flex-end' }}>
               <div className="field field-grow">
-                <label htmlFor="library-search">Search expressions (case-sensitive)</label>
+                <label htmlFor="library-search">
+                  {lookupMode === 'case-insensitive-view'
+                    ? 'Search (case-insensitive view)'
+                    : 'Search expressions (case-sensitive)'}
+                </label>
                 <input
                   id="library-search"
                   type="search"
@@ -268,6 +340,24 @@ export function LibraryWorkspace() {
                   placeholder="Exact literal substring, e.g., TNF-α, p53, PD"
                   disabled={storageUnavailable}
                 />
+              </div>
+
+              <div className="field">
+                <label htmlFor="library-lookup-mode">Lookup mode</label>
+                <select
+                  id="library-lookup-mode"
+                  className="select"
+                  value={lookupMode}
+                  onChange={(event) => setLookupMode(event.target.value as LookupMode)}
+                  disabled={storageUnavailable}
+                >
+                  <option value="substring">Literal substring (case-sensitive)</option>
+                  <option value="exact">Exact surface (case-sensitive)</option>
+                  <option value="prefix">Prefix (case-sensitive)</option>
+                  <option value="case-insensitive-view">
+                    Case-insensitive view (search-only)
+                  </option>
+                </select>
               </div>
 
               <div className="field">

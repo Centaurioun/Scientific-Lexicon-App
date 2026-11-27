@@ -12,6 +12,54 @@ import {
   DEFAULT_PROCESSING_LIMITS,
   OccurrenceLimitTracker,
 } from '@/domain/processing-limits';
+import { isSpanEligibleInDocument } from '@/domain/document-input';
+
+export const AHOCORASICK_TABLE_ADAPTER_VERSION = 'ahocorasick-1.0.2-tables-v1';
+
+export class AutomatonShapeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AutomatonShapeError';
+  }
+}
+
+export interface AutomatonTables {
+  gotoFn: Record<number, Record<string, number>>;
+  failure: Record<number, number>;
+  output: Record<number, string[]>;
+}
+
+/**
+ * Validates the internal transition table structure of pinned ahocorasick@1.0.2.
+ * Fails closed explicitly rather than reading undefined properties if the dependency changes.
+ */
+export function assertCompatibleAutomatonShape(automaton: unknown): AutomatonTables {
+  if (!automaton || typeof automaton !== 'object') {
+    throw new AutomatonShapeError(
+      `Incompatible automaton instance (${AHOCORASICK_TABLE_ADAPTER_VERSION}): expected non-null object.`,
+    );
+  }
+  const candidate = automaton as Record<string, unknown>;
+  if (
+    !candidate.gotoFn ||
+    typeof candidate.gotoFn !== 'object' ||
+    !candidate.failure ||
+    typeof candidate.failure !== 'object' ||
+    !candidate.output ||
+    typeof candidate.output !== 'object'
+  ) {
+    throw new AutomatonShapeError(
+      `Incompatible automaton transition tables (${AHOCORASICK_TABLE_ADAPTER_VERSION}): missing gotoFn, failure, or output.`,
+    );
+  }
+  const gotoFn = candidate.gotoFn as Record<number, unknown>;
+  if (!gotoFn[0] || typeof gotoFn[0] !== 'object') {
+    throw new AutomatonShapeError(
+      `Incompatible automaton root state (${AHOCORASICK_TABLE_ADAPTER_VERSION}): missing gotoFn[0].`,
+    );
+  }
+  return automaton as AutomatonTables;
+}
 
 interface RawHit {
   start: number;
@@ -146,13 +194,9 @@ async function executeCompiledSearch(
   }
 
   // The dependency's search() materializes every raw match. Walk its compiled
-  // transition tables directly so the application can stop at the occurrence
-  // bound without constructing an unbounded intermediate results array.
-  const machine = index.automaton as unknown as {
-    gotoFn: Record<number, Record<string, number>>;
-    failure: Record<number, number>;
-    output: Record<number, string[]>;
-  };
+  // transition tables directly through a versioned shape guard so the application
+  // stops at the occurrence bound without constructing an unbounded intermediate array.
+  const machine = assertCompatibleAutomatonShape(index.automaton);
   const collector = new OccurrenceCollector(newTracker(options));
   let state = 0;
   let processed = 0;
@@ -177,6 +221,13 @@ async function executeCompiledSearch(
           throw new Error(
             `Registered matcher slice mismatch at [${start}, ${end}): expected "${pattern}", observed "${slice}".`,
           );
+        }
+
+        if (
+          options?.parsedDocument &&
+          !isSpanEligibleInDocument(start, end, options.parsedDocument)
+        ) {
+          continue;
         }
 
         const boundary = checkScientificBoundary(text, start, end);
@@ -207,6 +258,7 @@ async function executeCompiledSearch(
     }
   }
 
+  throwIfAborted(options?.signal);
   return collector.toOccurrences();
 }
 
@@ -250,6 +302,13 @@ export class SimpleOracleRegisteredMatcher implements RegisteredMatcher {
         if (start === -1) break;
         const end = start + pattern.length;
         const slice = text.slice(start, end);
+        if (
+          options?.parsedDocument &&
+          !isSpanEligibleInDocument(start, end, options.parsedDocument)
+        ) {
+          searchFrom = start + 1;
+          continue;
+        }
         const boundary = checkScientificBoundary(text, start, end);
         if (boundary.allowed) {
           collector.add({

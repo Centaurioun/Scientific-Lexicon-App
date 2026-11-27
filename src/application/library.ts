@@ -18,10 +18,27 @@ import {
 import type { LibraryRepository, RecoveryRepository } from '@/domain/repository';
 import {
   compareCodeUnits,
+  languageMatchesFilter,
   parseLibrarySnapshot,
   type Expression,
+  type ExpressionRole,
   type LibrarySnapshot,
 } from '@/domain/schema';
+
+export type LookupMode = 'substring' | 'exact' | 'prefix' | 'case-insensitive-view';
+export type LibraryLanguageFilter = 'all' | 'en' | 'tr' | 'shared' | 'undetermined';
+
+export interface LookupOptions {
+  query?: string;
+  mode?: LookupMode;
+  language?: LibraryLanguageFilter;
+  role?: 'all' | ExpressionRole;
+}
+
+export interface HomonymSibling {
+  sharedSurface: string;
+  conceptId: string;
+}
 
 export async function listLibrary(repo: LibraryRepository): Promise<LibrarySnapshot> {
   const snapshot = await repo.snapshot();
@@ -38,6 +55,89 @@ export function findExpressions(snapshot: LibrarySnapshot, query: string): Expre
     const byText = compareCodeUnits(a.text, b.text);
     if (byText !== 0) return byText;
     return compareCodeUnits(a.id, b.id);
+  });
+}
+
+function matchesQueryByMode(expr: Expression, query: string, mode: LookupMode): boolean {
+  if (query.length === 0) return true;
+  switch (mode) {
+    case 'substring':
+      return expr.text.includes(query);
+    case 'exact':
+      return expr.text === query;
+    case 'prefix':
+      return expr.text.startsWith(query);
+    case 'case-insensitive-view': {
+      // Search-only case folding; never alters stored canonical expression text.
+      // Respect Turkish dotted/dotless I/İ/ı rules when evaluating Turkish expressions.
+      if (expr.language.kind === 'language' && expr.language.tag === 'tr') {
+        return expr.text.toLocaleLowerCase('tr').includes(query.toLocaleLowerCase('tr'));
+      }
+      return expr.text.toLowerCase().includes(query.toLowerCase());
+    }
+  }
+}
+
+/**
+ * Pure read-only terminology lookup with explicit mode selection, language/role filters,
+ * and deterministic UTF-16 code-unit sorting. Never normalizes or mutates stored expressions.
+ */
+export function lookupExpressions(
+  snapshot: LibrarySnapshot,
+  options: LookupOptions = {},
+): Expression[] {
+  const query = options.query ?? '';
+  const mode: LookupMode = options.mode ?? 'substring';
+  const language: LibraryLanguageFilter = options.language ?? 'all';
+  const role: 'all' | ExpressionRole = options.role ?? 'all';
+
+  const matched = snapshot.expressions.filter((expr) => {
+    if (language === 'undetermined') {
+      if (expr.language.kind !== 'undetermined') return false;
+    } else if (!languageMatchesFilter(expr.language, language)) {
+      return false;
+    }
+    if (role !== 'all' && expr.role !== role) {
+      return false;
+    }
+    return matchesQueryByMode(expr, query, mode);
+  });
+
+  return matched.sort((a, b) => {
+    const byText = compareCodeUnits(a.text, b.text);
+    if (byText !== 0) return byText;
+    return compareCodeUnits(a.id, b.id);
+  });
+}
+
+/**
+ * Finds other concepts in the snapshot that share an exact expression surface with `conceptId`
+ * (e.g. homonym abbreviations like "PD"). Read-only inspection helper; never merges concepts.
+ */
+export function findHomonymSiblings(
+  snapshot: LibrarySnapshot,
+  conceptId: string,
+): HomonymSibling[] {
+  const ownSurfaces = new Set(
+    snapshot.expressions.filter((e) => e.conceptId === conceptId).map((e) => e.text),
+  );
+  if (ownSurfaces.size === 0) return [];
+
+  const seen = new Set<string>();
+  const siblings: HomonymSibling[] = [];
+  for (const expr of snapshot.expressions) {
+    if (expr.conceptId === conceptId) continue;
+    if (!ownSurfaces.has(expr.text)) continue;
+    const key = `${expr.text}\u0000${expr.conceptId}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    siblings.push({ sharedSurface: expr.text, conceptId: expr.conceptId });
+  }
+
+  return siblings.sort((a, b) => {
+    const bySurface = compareCodeUnits(a.sharedSurface, b.sharedSurface);
+    if (bySurface !== 0) return bySurface;
+    return compareCodeUnits(a.conceptId, b.conceptId);
   });
 }
 

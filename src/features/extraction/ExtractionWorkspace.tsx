@@ -14,18 +14,32 @@ import {
   listLibrary,
   proposeChange,
 } from '@/application/library';
+import { parseDocumentText, readDocument } from '@/application/document-input';
+import { rankCandidates } from '@/application/ranking';
 import { AppHeader } from '@/components/AppHeader';
 import { ChangeApprovalDialog } from '@/components/ChangeApprovalDialog';
+import type { CandidateGrammarMode } from '@/domain/candidate-evidence';
 import type { ChangePayload, ProposedChange } from '@/domain/changes';
+import {
+  parseDictionaryPackJson,
+  type DictionaryPack,
+} from '@/domain/dictionary-pack';
+import type { DocumentFormat } from '@/domain/document-input';
 import type { CandidateFilter, ExtractionRun } from '@/domain/extraction';
 import {
   DEFAULT_PROCESSING_LIMITS,
   type ProcessingLimits,
 } from '@/domain/processing-limits';
+import type { RankMode } from '@/domain/ranking';
 import type { LibrarySnapshot, Occurrence } from '@/domain/schema';
 import { CandidateTable } from './CandidateTable';
+import {
+  clearSessionDictionaryPack,
+  getSessionDictionaryPack,
+  setSessionDictionaryPack,
+} from './dictionary-pack-store';
 import { ProcessingLimitsPanel } from './ProcessingLimitsPanel';
-import { readTxt } from './read-text';
+import { RankingControls } from './RankingControls';
 import { readProcessingLimits, writeProcessingLimits } from './processing-limits-store';
 import {
   clearSessionExtractionRun,
@@ -49,6 +63,15 @@ export function ExtractionWorkspace() {
   const [processingLimitsNotice, setProcessingLimitsNotice] = useState<string | null>(null);
 
   const [filter, setFilter] = useState<CandidateFilter>('all');
+  const [grammarMode, setGrammarMode] = useState<CandidateGrammarMode>('s1-grammar-1');
+  const [inputFormat, setInputFormat] = useState<Exclude<DocumentFormat, 'docx'>>('txt');
+  const [rankMode, setRankMode] = useState<RankMode>('source-order');
+  const [groupedView, setGroupedView] = useState(false);
+  const [dictionaryPack, setDictionaryPack] = useState<DictionaryPack | null>(() =>
+    getSessionDictionaryPack(),
+  );
+  const [usePackAsHints, setUsePackAsHints] = useState(false);
+  const [packError, setPackError] = useState<string | null>(null);
   const [selectedOccurrenceId, setSelectedOccurrenceId] = useState<string | null>(null);
   const [rejectedIds, setRejectedIds] = useState<Set<string>>(() => new Set());
   const [sessionResolvedMap, setSessionResolvedMap] = useState<Map<string, string>>(
@@ -183,6 +206,54 @@ export function ExtractionWorkspace() {
     setProcessingLimitsNotice('Processing limits saved for this browser only.');
   };
 
+  const handleGrammarModeChange = (nextMode: CandidateGrammarMode) => {
+    if (nextMode === grammarMode) return;
+    clearActiveRunForPolicyChange();
+    setGrammarMode(nextMode);
+    setStatusNotice(
+      `Grammar mode switched to ${nextMode}. Previous run cleared; analyze again to compare outputs.`,
+    );
+  };
+
+  const handleInputFormatChange = (nextFormat: Exclude<DocumentFormat, 'docx'>) => {
+    if (nextFormat === inputFormat) return;
+    clearActiveRunForPolicyChange();
+    setInputFormat(nextFormat);
+    setStatusNotice(
+      `Input format set to ${nextFormat === 'markdown' ? 'Structured Markdown (.md)' : 'Plain text (.txt)'}. Analyze again to re-parse source.`,
+    );
+  };
+
+  const handleDictionaryPackUpload = async (file: File) => {
+    setPackError(null);
+    try {
+      const raw = await file.text();
+      const validated = parseDictionaryPackJson(raw);
+      clearActiveRunForPolicyChange();
+      setDictionaryPack(validated);
+      setSessionDictionaryPack(validated);
+      setStatusNotice(
+        `Loaded session-only dictionary pack "${validated.name}" (${validated.entries.length} entries; read-only, never writes library).`,
+      );
+    } catch (error) {
+      setPackError(error instanceof Error ? error.message : 'Unable to validate dictionary pack.');
+    }
+  };
+
+  const handleClearDictionaryPack = () => {
+    clearActiveRunForPolicyChange();
+    setDictionaryPack(null);
+    setUsePackAsHints(false);
+    setPackError(null);
+    clearSessionDictionaryPack();
+    setStatusNotice('Cleared session dictionary pack.');
+  };
+
+  const handleUsePackAsHintsChange = (enabled: boolean) => {
+    clearActiveRunForPolicyChange();
+    setUsePackAsHints(enabled);
+  };
+
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -192,14 +263,17 @@ export function ExtractionWorkspace() {
     setStatusNotice(null);
     handleSourceTextChange('');
     try {
-      const decoded = await readTxt(file, processingLimits);
-      setSourceText(decoded);
-      setRetentionTitle(file.name.replace(/\.txt$/i, '') || 'Local TXT source');
+      const parsedDoc = await readDocument(file, processingLimits);
+      const nextFormat: Exclude<DocumentFormat, 'docx'> =
+        parsedDoc.format === 'markdown' ? 'markdown' : 'txt';
+      setInputFormat(nextFormat);
+      setSourceText(parsedDoc.text);
+      setRetentionTitle(file.name.replace(/\.(?:txt|md|markdown)$/i, '') || 'Local source');
       setStatusNotice(
-        `Loaded "${file.name}" (${decoded.length.toLocaleString('en-US')} UTF-16 chars) into session memory only.`,
+        `Loaded "${file.name}" (${parsedDoc.format}, ${parsedDoc.text.length.toLocaleString('en-US')} UTF-16 chars) into session memory only.`,
       );
     } catch (error) {
-      setAnalysisError(error instanceof Error ? error.message : 'Unable to read TXT file.');
+      setAnalysisError(error instanceof Error ? error.message : 'Unable to read local document file.');
     }
   };
 
@@ -224,14 +298,22 @@ export function ExtractionWorkspace() {
     setRetainedRunLink(null);
 
     try {
+      const parsedDoc = parseDocumentText(sourceText, inputFormat, processingLimits);
       const result = await analyzeText(
-        sourceText,
+        parsedDoc.text,
         snapshot,
         {
           analyze: (text) => nlpRef.current!.analyze(text, controller.signal),
         },
         matcherRef.current!,
-        { signal: controller.signal, limits: processingLimits },
+        {
+          signal: controller.signal,
+          limits: processingLimits,
+          grammarMode,
+          parsedDocument: parsedDoc,
+          dictionaryPack,
+          useDictionaryPackAsDiscoveryHints: Boolean(dictionaryPack && usePackAsHints),
+        },
       );
 
       // Guard against stale async completion
@@ -246,7 +328,7 @@ export function ExtractionWorkspace() {
       setSessionResolvedMap(new Map());
       setRetainedRunLink(null);
       setStatusNotice(
-        `Analyzed locally at library revision ${result.libraryRevision}: ${result.occurrences.length} occurrence spans identified (session-only; not persisted).`,
+        `Analyzed locally (${result.algorithmVersion}, ${parsedDoc.format}) at library revision ${result.libraryRevision}: ${result.occurrences.length} occurrence spans identified (session-only; not persisted).`,
       );
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -287,6 +369,11 @@ export function ExtractionWorkspace() {
     if (!run) return [];
     return selectCandidates(run, filter);
   }, [run, filter]);
+
+  const rankedGroups = useMemo(() => {
+    if (visibleOccurrences.length === 0) return [];
+    return rankCandidates(visibleOccurrences, rankMode);
+  }, [visibleOccurrences, rankMode]);
 
   const counts = useMemo(() => {
     if (!run) {
@@ -603,15 +690,33 @@ export function ExtractionWorkspace() {
           onSave={handleSaveProcessingLimits}
         />
 
+        <RankingControls
+          grammarMode={grammarMode}
+          inputFormat={inputFormat}
+          rankMode={rankMode}
+          groupedView={groupedView}
+          dictionaryPack={dictionaryPack}
+          usePackAsHints={usePackAsHints}
+          packError={packError}
+          disabled={!processingLimitsReady || analyzing || applying}
+          onGrammarModeChange={handleGrammarModeChange}
+          onInputFormatChange={handleInputFormatChange}
+          onRankModeChange={(nextRank) => setRankMode(nextRank)}
+          onGroupedViewChange={(grouped) => setGroupedView(grouped)}
+          onDictionaryPackUpload={(file) => void handleDictionaryPackUpload(file)}
+          onClearDictionaryPack={handleClearDictionaryPack}
+          onUsePackAsHintsChange={handleUsePackAsHintsChange}
+        />
+
         {/* Input panel */}
         <section className="panel stack-md" aria-labelledby="source-input-heading">
           <div className="panel-header" style={{ marginBottom: 0 }}>
             <div>
               <p className="status-label">SOURCE INPUT (BROWSER-LOCAL)</p>
-              <h2 id="source-input-heading">Paste text or load UTF-8 TXT</h2>
+              <h2 id="source-input-heading">Paste text or load UTF-8 TXT / Markdown</h2>
             </div>
             <div className="small muted">
-              Effective limits: {processingLimits.maxTxtInputBytes.toLocaleString('en-US')} TXT bytes ·{' '}
+              Effective limits: {processingLimits.maxTxtInputBytes.toLocaleString('en-US')} TXT/MD bytes ·{' '}
               {processingLimits.maxTextUtf16CodeUnits.toLocaleString('en-US')} UTF-16 chars ·{' '}
               {processingLimits.maxCandidateOccurrences.toLocaleString('en-US')} distinct occurrence spans (strict reject, no truncation)
             </div>
@@ -625,17 +730,17 @@ export function ExtractionWorkspace() {
               value={sourceText}
               onChange={(event) => handleSourceTextChange(event.target.value)}
               disabled={applying}
-              placeholder="Paste synthetic English scientific text (e.g., Periodontal ligament stem cells express TNF-α and CD4+ markers.)"
+              placeholder="Paste synthetic English scientific text or Markdown (e.g., Periodontal ligament-derived stem cells express TNF-α and Na+/K+-ATPase.)"
             />
           </div>
 
           <div className="toolbar" style={{ marginBottom: 0 }}>
             <div className="field">
-              <label htmlFor="txt-file-input">Or load local UTF-8 .txt file</label>
+              <label htmlFor="txt-file-input">Or load local UTF-8 .txt or .md file</label>
               <input
                 id="txt-file-input"
                 type="file"
-                accept=".txt,text/plain"
+                accept=".txt,.md,.markdown,text/plain,text/markdown"
                 className="input"
                 disabled={applying}
                 onChange={(event) => void handleFileChange(event)}
@@ -703,6 +808,9 @@ export function ExtractionWorkspace() {
                 text={run.text}
                 occurrences={run.occurrences}
                 selectedOccurrenceId={selectedOccurrenceId}
+                parsedDocument={run.parsedDocument}
+                evidenceBySpan={run.evidenceBySpan}
+                packSuggestionsBySpan={run.packSuggestionsBySpan}
                 onSelectOccurrence={(id) => setSelectedOccurrenceId(id)}
               />
 
@@ -712,6 +820,7 @@ export function ExtractionWorkspace() {
                     <p className="status-label">CANDIDATE REVIEW</p>
                     <h2 id="candidate-review-heading">Discovered &amp; matched occurrences</h2>
                   </div>
+                  <span className="tag tag-mono">{run.algorithmVersion}</span>
                 </div>
 
                 <div className="tabs" role="tablist" aria-label="Candidate state filter">
@@ -744,6 +853,11 @@ export function ExtractionWorkspace() {
                   rejectedIds={rejectedIds}
                   sessionResolvedMap={sessionResolvedMap}
                   staleWarning={runIsStale}
+                  evidenceBySpan={run.evidenceBySpan}
+                  packSuggestionsBySpan={run.packSuggestionsBySpan}
+                  rankMode={rankMode}
+                  groupedView={groupedView}
+                  rankedGroups={rankedGroups}
                   onSelectOccurrence={(id) => setSelectedOccurrenceId(id)}
                   onCreateConcept={(occ) => void handleCreateConceptFromOcc(occ)}
                   onLinkToConcept={(occ, cid) => void handleLinkToConcept(occ, cid)}

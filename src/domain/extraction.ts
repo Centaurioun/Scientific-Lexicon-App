@@ -1,5 +1,8 @@
 import { compareCodeUnits, type Expression, type Occurrence } from './schema';
 import type { OccurrenceLimitTracker } from './processing-limits';
+import type { ParsedDocument } from './document-input';
+import type { AcronymExpansionHypothesis, CandidateEvidence } from './candidate-evidence';
+import type { DictionaryPackSuggestion } from './dictionary-pack';
 
 export const MATCH_BOUNDARY_POLICY = 's1-boundary-v1';
 export const CANDIDATE_GRAMMAR_VERSION = 's1-grammar-1';
@@ -42,11 +45,13 @@ export interface RegisteredMatcher {
 export interface MatcherOptions {
   occurrenceTracker?: OccurrenceLimitTracker;
   signal?: AbortSignal;
+  parsedDocument?: ParsedDocument;
 }
 
 export interface CandidateGenerationOptions {
   occurrenceTracker?: OccurrenceLimitTracker;
   signal?: AbortSignal;
+  parsedDocument?: ParsedDocument;
 }
 
 export interface CandidateGenerator {
@@ -63,6 +68,14 @@ export interface ExtractionRun {
   algorithmVersion: string;
   libraryRevision: number;
   occurrences: Occurrence[];
+  /** Session-only explainable candidate evidence keyed by "start:end". Never persisted. */
+  evidenceBySpan?: ReadonlyMap<string, CandidateEvidence>;
+  /** Session-only bounded acronym–long-form hypotheses. Never persisted or auto-merged. */
+  hypotheses?: readonly AcronymExpansionHypothesis[];
+  /** Session-only parsed document metadata (format, sections, excluded ranges, warnings). Never persisted. */
+  parsedDocument?: ParsedDocument;
+  /** Session-only read-only dictionary pack suggestions keyed by "start:end". Never persisted. */
+  packSuggestionsBySpan?: ReadonlyMap<string, DictionaryPackSuggestion[]>;
 }
 
 export type ReviewIntent = 'create-concept' | 'link-form' | 'reject' | 'resolve-existing';

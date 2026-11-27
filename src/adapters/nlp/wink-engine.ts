@@ -22,17 +22,56 @@ interface WorkerResponseMessage {
   error?: string;
 }
 
+export const LARGE_INPUT_WORKER_REQUIRED_CHARS = 20_000;
+
+export class WorkerUnavailableForLargeInputError extends Error {
+  readonly inputLength: number;
+  readonly threshold: number;
+
+  constructor(inputLength: number, threshold: number = LARGE_INPUT_WORKER_REQUIRED_CHARS) {
+    super(
+      `Local NLP Web Worker is unavailable for a large document (${inputLength.toLocaleString('en-US')} UTF-16 code units; main-thread fallback cap is ${threshold.toLocaleString('en-US')}). Analysis stopped to avoid freezing the browser UI; reduce the input or reload in a Worker-capable browser.`,
+    );
+    this.name = 'WorkerUnavailableForLargeInputError';
+    this.inputLength = inputLength;
+    this.threshold = threshold;
+  }
+}
+
+export interface BrowserLocalNlpEngineOptions {
+  requireWorkerAboveChars?: number;
+  /** Test-only switch to verify browser worker-unavailability guard in Node unit tests. */
+  simulateBrowserWithoutWorker?: boolean;
+}
+
 /**
  * Browser-local NLP engine that prefers a dedicated Web Worker to avoid blocking
- * the UI thread, falling back cleanly to local in-thread Wink execution if Workers
- * are unavailable in the runtime. Never downloads external models or sends data over the network.
+ * the UI thread. Falls back to local in-thread Wink execution only for small inputs
+ * (<= LARGE_INPUT_WORKER_REQUIRED_CHARS) or headless Node test runtimes. On large
+ * browser inputs, fails closed explicitly instead of freezing the main thread.
+ * Never downloads external models or sends data over the network.
  */
 export class BrowserLocalNlpEngine implements NlpEngine {
   private worker: Worker | null = null;
   private nextRequestId = 1;
   private readonly fallback = new WinkNlpEngine();
+  private readonly requireWorkerAboveChars: number;
+  private readonly simulateBrowserWithoutWorker: boolean;
+
+  constructor(options: BrowserLocalNlpEngineOptions = {}) {
+    this.requireWorkerAboveChars =
+      options.requireWorkerAboveChars ?? LARGE_INPUT_WORKER_REQUIRED_CHARS;
+    this.simulateBrowserWithoutWorker = options.simulateBrowserWithoutWorker ?? false;
+  }
+
+  private isBrowserContext(): boolean {
+    return this.simulateBrowserWithoutWorker || typeof window !== 'undefined';
+  }
 
   private ensureWorker(): Worker | null {
+    if (this.simulateBrowserWithoutWorker) {
+      return null;
+    }
     if (typeof Worker === 'undefined' || typeof window === 'undefined') {
       return null;
     }
@@ -65,6 +104,9 @@ export class BrowserLocalNlpEngine implements NlpEngine {
 
     const worker = this.ensureWorker();
     if (!worker) {
+      if (this.isBrowserContext() && text.length > this.requireWorkerAboveChars) {
+        throw new WorkerUnavailableForLargeInputError(text.length, this.requireWorkerAboveChars);
+      }
       return this.fallback.analyze(text);
     }
 
@@ -99,7 +141,11 @@ export class BrowserLocalNlpEngine implements NlpEngine {
       const handleError = () => {
         cleanup();
         this.terminate();
-        // Fallback to local in-thread Wink if worker failed to load in preview bundler
+        if (this.isBrowserContext() && text.length > this.requireWorkerAboveChars) {
+          reject(new WorkerUnavailableForLargeInputError(text.length, this.requireWorkerAboveChars));
+          return;
+        }
+        // Small-input fallback only; never silently blocks main thread on large documents
         this.fallback.analyze(text).then(resolve, reject);
       };
 

@@ -7,6 +7,13 @@ import {
   parseProcessingLimits,
   type ProcessingLimits,
 } from '@/domain/processing-limits';
+export {
+  detectDocumentFormat,
+  parseDocumentText,
+  parsePlainTextDocument,
+  readDocument,
+  type ReadableDocumentFile,
+} from '@/application/document-input';
 
 export interface ReadableTxtFile {
   name?: string;
