@@ -4,15 +4,16 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export function normalizeNextDevArgs(rawArgs) {
+  const input = rawArgs[0] === '--' ? rawArgs.slice(1) : rawArgs;
   const args = [];
   let hasHostname = false;
 
-  for (let i = 0; i < rawArgs.length; i += 1) {
-    const arg = rawArgs[i];
+  for (let i = 0; i < input.length; i += 1) {
+    const arg = input[i];
 
     if (arg === '--host') {
       hasHostname = true;
-      const nextArg = rawArgs[i + 1];
+      const nextArg = input[i + 1];
       if (nextArg && !nextArg.startsWith('-')) {
         args.push('--hostname', nextArg);
         i += 1;
