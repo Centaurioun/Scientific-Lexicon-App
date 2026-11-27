@@ -15,6 +15,8 @@ import { AppHeader } from '@/components/AppHeader';
 import type { LibrarySnapshot } from '@/domain/schema';
 import { getSessionExtractionRun } from '@/features/extraction/session-run-store';
 import { BackupPanel } from './BackupPanel';
+import { DataOperationsPanel } from './DataOperationsPanel';
+import { QualityInspectorPanel } from './QualityInspectorPanel';
 
 function downloadExportFile(content: string, format: ExportFormat, scope: ExportScope): string {
   const mimeByFormat: Record<ExportFormat, string> = {
@@ -51,7 +53,13 @@ export function ExportWorkspace() {
 
   const sessionRun = getSessionExtractionRun();
 
-  const loadSnapshot = useCallback(async () => {
+  const loadSnapshot = useCallback(async (providedSnapshot?: LibrarySnapshot) => {
+    if (providedSnapshot) {
+      setSnapshot(providedSnapshot);
+      setStorageError(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setStorageError(null);
     try {
@@ -100,8 +108,9 @@ export function ExportWorkspace() {
             <p className="eyebrow">INTERCHANGE &amp; DURABILITY</p>
             <h1>Export &amp; Recovery Workspace</h1>
             <p className="muted small">
-              Deterministic presentation exports (TXT, Markdown, CSV, JSON) and complete SHA-256
-              verified portable backups. All file generation occurs locally in your browser.
+              Deterministic presentation exports (TXT, Markdown, CSV, JSON), complete SHA-256
+              verified portable backups, reviewed synthetic CSV/TSV staging &amp; additive import,
+              and read-only library quality diagnostics. All operations occur locally in your browser.
             </p>
           </div>
           <button
@@ -240,6 +249,16 @@ export function ExportWorkspace() {
             onRestored={loadSnapshot}
           />
         </div>
+
+        {/* WP03 E6: Reviewed Synthetic Data Operations */}
+        <DataOperationsPanel
+          snapshot={snapshot}
+          disabled={loading || Boolean(storageError)}
+          onSnapshotChanged={loadSnapshot}
+        />
+
+        {/* WP03 E7: Read-Only Quality & Maintenance Inspector */}
+        <QualityInspectorPanel snapshot={snapshot} />
       </main>
     </>
   );

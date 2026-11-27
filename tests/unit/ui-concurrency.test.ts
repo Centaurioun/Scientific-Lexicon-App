@@ -488,5 +488,152 @@ describe('QC05 + FH01: ExtractionWorkspace async concurrency and lossless revisi
     expect(uiWritesAfterUnmount).toBe(0);
     expect(controller.isCommitInFlight()).toBe(false);
   });
+
+  it('E1-1: does not silently lose a revision notification arriving during the 8th reconcile drain and converges via bounded continuation', async () => {
+    const controller = new RevisionReconciliationController();
+    let currentSnapshot = makeSnapshot(0);
+    let loadCallCount = 0;
+    let matcherInvalidations = 0;
+    let analysisAborts = 0;
+    let statusNotice: string | null = null;
+    let pendingEntry: { proposal: ProposedChange; retainMeta: RetainedRunMeta | null } | null = {
+      proposal: makeProposal('batch-newer-rev8', 8),
+      retainMeta: null,
+    };
+    let invalidatedReason: string | null = null;
+
+    // 1 initial post-commit load (rev 1) + 8 drain loads (revs 2..9).
+    // During load #9 (the 8th drain, loading rev 9), notification rev 10 arrives!
+    // The controller must NOT drop rev 10 in finally — it must coalesce and schedule a bounded
+    // continuation refresh (load #10 -> rev 10) and invalidate the stale rev-8 proposal.
+    const loadSnapshot = async (): Promise<LibrarySnapshot | null> => {
+      loadCallCount += 1;
+      const loadedRevision = loadCallCount; // load 1 -> rev 1, ..., load 9 (8th drain) -> rev 9, load 10 -> rev 10
+      if (loadCallCount >= 1 && loadCallCount <= 9) {
+        // An external write commits loadedRevision + 1 while this loadSnapshot is in flight!
+        // Specifically, when loadCallCount === 9 (the 8th drain!), rev 10 arrives.
+        controller.observeRevisionNotification(loadedRevision + 1);
+      }
+      const snap = makeSnapshot(loadedRevision);
+      currentSnapshot = snap;
+      return snap;
+    };
+
+    await controller.runCommit({
+      proposal: makeProposal('batch-e1', 0),
+      retainMeta: null,
+      capturedContextSeq: 1,
+      getCurrentContextSeq: () => 1,
+      getActiveRunId: () => 'run-1',
+      getActivePendingEntry: () => pendingEntry,
+      isMounted: () => true,
+      applyProposal: async () => {
+        controller.observeRevisionNotification(1);
+        return { status: 'applied', revision: 1 };
+      },
+      loadSnapshot,
+      invalidateMatcher: () => {
+        matcherInvalidations += 1;
+      },
+      abortActiveAnalysis: () => {
+        analysisAborts += 1;
+      },
+      setApplying: () => {},
+      clearPendingIfBatchMatches: (batchId) => {
+        if (pendingEntry?.proposal.payload.batchId === batchId) {
+          pendingEntry = null;
+        }
+      },
+      invalidateStalePendingProposal: (reason) => {
+        invalidatedReason = reason;
+        pendingEntry = null;
+      },
+      attachRetainedRunLink: () => {},
+      setStatusNotice: (msg) => {
+        statusNotice = msg;
+      },
+      setAnalysisError: () => {},
+    });
+
+    expect(currentSnapshot.libraryRevision).toBe(10);
+    expect(loadCallCount).toBe(10);
+    expect(controller.isFreshnessConfirmed()).toBe(true);
+    expect(controller.getPendingHighWaterRevision()).toBeNull();
+    expect(pendingEntry).toBeNull();
+    expect(invalidatedReason).toContain('revision 10');
+    expect(statusNotice).toContain('revision 1');
+    expect(statusNotice).toContain('revision 10');
+    expect(matcherInvalidations).toBeGreaterThanOrEqual(9);
+    expect(analysisAborts).toBeGreaterThanOrEqual(8);
+  });
+
+  it('E1-2: fails closed with explicit unconfirmed freshness state when continuous revision notifications exceed total bounded continuation passes', async () => {
+    const controller = new RevisionReconciliationController();
+    let currentSnapshot = makeSnapshot(0);
+    let loadCallCount = 0;
+    let analysisError: string | null = null;
+    let pendingEntry: { proposal: ProposedChange; retainMeta: RetainedRunMeta | null } | null = {
+      proposal: makeProposal('batch-open', 1),
+      retainMeta: null,
+    };
+
+    // Every single loadSnapshot triggers yet another external notification without stopping.
+    const loadSnapshot = async (): Promise<LibrarySnapshot | null> => {
+      loadCallCount += 1;
+      controller.observeRevisionNotification(loadCallCount + 1);
+      const snap = makeSnapshot(loadCallCount);
+      currentSnapshot = snap;
+      return snap;
+    };
+
+    await controller.runCommit({
+      proposal: makeProposal('batch-storm', 0),
+      retainMeta: null,
+      capturedContextSeq: 1,
+      getCurrentContextSeq: () => 1,
+      getActiveRunId: () => 'run-1',
+      getActivePendingEntry: () => pendingEntry,
+      isMounted: () => true,
+      applyProposal: async () => {
+        controller.observeRevisionNotification(1);
+        return { status: 'applied', revision: 1 };
+      },
+      loadSnapshot,
+      invalidateMatcher: () => {},
+      abortActiveAnalysis: () => {},
+      setApplying: () => {},
+      clearPendingIfBatchMatches: (batchId) => {
+        if (pendingEntry?.proposal.payload.batchId === batchId) {
+          pendingEntry = null;
+        }
+      },
+      invalidateStalePendingProposal: () => {
+        pendingEntry = null;
+      },
+      attachRetainedRunLink: () => {},
+      setStatusNotice: () => {},
+      setAnalysisError: (msg) => {
+        analysisError = msg;
+      },
+    });
+
+    // Must stop within a strict upper bound (no unbounded loop), fail closed on freshness,
+    // invalidate any open proposal, and preserve the pending high-water revision until an explicit retry succeeds.
+    expect(loadCallCount).toBeLessThanOrEqual(20);
+    expect(controller.isFreshnessConfirmed()).toBe(false);
+    expect(controller.getPendingHighWaterRevision()).toBe(loadCallCount + 1);
+    expect(pendingEntry).toBeNull();
+    expect(analysisError).toMatch(/authoritative revision freshness could not be confirmed/i);
+
+    // Explicit retry settles cleanly once notifications stop arriving
+    const settledSnap = await controller.confirmFreshnessWithSnapshot(async () => {
+      const snap = makeSnapshot(loadCallCount + 1);
+      currentSnapshot = snap;
+      return snap;
+    });
+    expect(settledSnap?.libraryRevision).toBe(loadCallCount + 1);
+    expect(controller.isFreshnessConfirmed()).toBe(true);
+    expect(controller.getPendingHighWaterRevision()).toBeNull();
+  });
 });
 

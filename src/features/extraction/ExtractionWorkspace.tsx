@@ -494,6 +494,12 @@ export function ExtractionWorkspace() {
     retainMeta: RetainedRunMeta | null = null,
   ) => {
     if (!snapshot) return;
+    if (reconcilerRef.current && !reconcilerRef.current.isFreshnessConfirmed()) {
+      setAnalysisError(
+        `STALE: Authoritative revision freshness is not confirmed (pending revision high-water mark: Rev ${reconcilerRef.current.getPendingHighWaterRevision() ?? 'unknown'}). Reload latest snapshot before proposing changes.`,
+      );
+      return;
+    }
     const contextSeq = requestSeqRef.current;
     const proposalSeq = ++proposalSeqRef.current;
     setAnalysisError(null);

@@ -130,23 +130,51 @@ export interface RunCommitCallbacks {
 }
 
 const MAX_RECONCILE_DRAINS = 8;
+const MAX_CONTINUATION_TURNS = 2;
 
 /**
- * Lossless same-instance revision reconciliation controller for ExtractionWorkspace (FH01).
+ * Lossless same-instance revision reconciliation controller for ExtractionWorkspace & Data Operations (FH01 + WP03 E1).
  *
  * Scope boundary: `DexieLibraryRepository.subscribeRevision` delivers notifications within the
  * same repository instance only (it is not a cross-tab broadcast channel). Separate browser tabs
- * remain protected by IndexedDB transaction atomicity and CAS revision checks (`conflict`), which
- * this controller reconciles by invalidating the matcher and reloading the authoritative snapshot.
+ * remain protected by IndexedDB transaction atomicity and CAS revision checks (`conflict` / `stale`),
+ * which this controller reconciles by invalidating the matcher and reloading the authoritative snapshot.
+ *
+ * WP03 E1 invariants:
+ * - Never drops a notification arriving during the 8th drain or in a finally block.
+ * - Coalesces any residual notifications into `pendingHighWaterRevision` and yields across a bounded
+ *   number of scheduled continuation turns (`MAX_CONTINUATION_TURNS`) so bursty notifications settle
+ *   without an unbounded synchronous loop.
+ * - If notifications continue beyond the bounded continuation budget, fails closed (`freshnessConfirmed = false`),
+ *   retains `pendingHighWaterRevision`, invalidates any open proposal, and requires an explicit retry
+ *   (`confirmFreshnessWithSnapshot`) before new bulk or candidate writes are allowed.
  */
 export class RevisionReconciliationController {
   private inFlightCommitBatchId: string | null = null;
   private phase: 'idle' | 'applying' | 'reconciling' = 'idle';
   private observedDuringApply: number[] = [];
   private observedDuringReconcile: number[] = [];
+  private freshnessConfirmed = true;
+  private pendingHighWaterRevision: number | null = null;
 
   isCommitInFlight(): boolean {
     return this.inFlightCommitBatchId !== null;
+  }
+
+  isFreshnessConfirmed(): boolean {
+    return this.freshnessConfirmed;
+  }
+
+  getPendingHighWaterRevision(): number | null {
+    return this.pendingHighWaterRevision;
+  }
+
+  private recordHighWater(revisions: readonly number[]): void {
+    for (const rev of revisions) {
+      if (this.pendingHighWaterRevision === null || rev > this.pendingHighWaterRevision) {
+        this.pendingHighWaterRevision = rev;
+      }
+    }
   }
 
   observeRevisionNotification(revision: number): RevisionNotificationDecision {
@@ -159,6 +187,55 @@ export class RevisionReconciliationController {
       return { action: 'defer' };
     }
     return { action: 'handle-external-immediately', revision };
+  }
+
+  /**
+   * Explicit retry helper when a prior notification storm left `freshnessConfirmed === false`.
+   * Executes a bounded reconciliation pass to re-establish authoritative snapshot freshness.
+   */
+  async confirmFreshnessWithSnapshot(
+    loadSnapshot: () => Promise<LibrarySnapshot | null>,
+    onInvalidate?: () => void,
+  ): Promise<LibrarySnapshot | null> {
+    if (this.inFlightCommitBatchId !== null) return null;
+    this.phase = 'reconciling';
+    this.observedDuringReconcile = [];
+    let latestSnapshot: LibrarySnapshot | null = null;
+
+    try {
+      onInvalidate?.();
+      latestSnapshot = await loadSnapshot();
+
+      let drains = 0;
+      while (this.observedDuringReconcile.length > 0 && drains < MAX_RECONCILE_DRAINS) {
+        drains += 1;
+        this.recordHighWater(this.observedDuringReconcile);
+        this.observedDuringReconcile = [];
+        onInvalidate?.();
+        latestSnapshot = await loadSnapshot();
+      }
+
+      if (this.observedDuringReconcile.length > 0) {
+        this.recordHighWater(this.observedDuringReconcile);
+        this.observedDuringReconcile = [];
+      }
+
+      if (
+        latestSnapshot !== null &&
+        (this.pendingHighWaterRevision === null ||
+          latestSnapshot.libraryRevision >= this.pendingHighWaterRevision) &&
+        this.observedDuringReconcile.length === 0
+      ) {
+        this.freshnessConfirmed = true;
+        this.pendingHighWaterRevision = null;
+      } else {
+        this.freshnessConfirmed = false;
+      }
+
+      return latestSnapshot;
+    } finally {
+      this.phase = 'idle';
+    }
   }
 
   async runCommit(ctx: RunCommitCallbacks): Promise<void> {
@@ -210,6 +287,7 @@ export class RevisionReconciliationController {
       }
       if (externalDuringApply.length > 0) {
         externalRevisionsObserved = true;
+        this.recordHighWater(externalDuringApply);
       }
 
       if (thrownError !== null) {
@@ -276,6 +354,7 @@ export class RevisionReconciliationController {
       }
 
       // Coalesce any revision notifications that arrived while loadSnapshot() was executing.
+      // Primary drain loop (bounded to MAX_RECONCILE_DRAINS).
       let drains = 0;
       while (
         ctx.isMounted() &&
@@ -284,15 +363,74 @@ export class RevisionReconciliationController {
       ) {
         drains += 1;
         externalRevisionsObserved = true;
+        this.recordHighWater(this.observedDuringReconcile);
         this.observedDuringReconcile = [];
         ctx.invalidateMatcher();
         ctx.abortActiveAnalysis();
         latestSnapshot = await ctx.loadSnapshot();
       }
 
+      // WP03 E1: If a notification arrived during the 8th drain (or more notifications remain),
+      // do NOT drop them in finally. Yield across a bounded number of scheduled continuation turns
+      // (MAX_CONTINUATION_TURNS), coalescing all pending notifications into one refresh per turn.
+      let continuationTurns = 0;
+      while (
+        ctx.isMounted() &&
+        this.observedDuringReconcile.length > 0 &&
+        continuationTurns < MAX_CONTINUATION_TURNS
+      ) {
+        continuationTurns += 1;
+        externalRevisionsObserved = true;
+        this.recordHighWater(this.observedDuringReconcile);
+        this.observedDuringReconcile = [];
+        // Yield a macrotask/microtask turn before the coalesced continuation refresh
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        if (!ctx.isMounted()) break;
+        // Include any notifications that arrived during the scheduled yield
+        if (this.observedDuringReconcile.length > 0) {
+          this.recordHighWater(this.observedDuringReconcile);
+          this.observedDuringReconcile = [];
+        }
+        ctx.invalidateMatcher();
+        ctx.abortActiveAnalysis();
+        latestSnapshot = await ctx.loadSnapshot();
+      }
+
+      // Check whether any un-drained notifications still remain after the bounded continuation budget.
+      if (this.observedDuringReconcile.length > 0) {
+        externalRevisionsObserved = true;
+        this.recordHighWater(this.observedDuringReconcile);
+        this.observedDuringReconcile = [];
+      }
+
+      const unconfirmedHighWater =
+        this.pendingHighWaterRevision !== null &&
+        (latestSnapshot === null || latestSnapshot.libraryRevision < this.pendingHighWaterRevision);
+
+      if (unconfirmedHighWater) {
+        // Fail closed: cannot confirm authoritative snapshot freshness within bounded budget.
+        this.freshnessConfirmed = false;
+        if (ctx.isMounted()) {
+          ctx.invalidateMatcher();
+          ctx.abortActiveAnalysis();
+          const activePending = ctx.getActivePendingEntry();
+          if (activePending) {
+            ctx.invalidateStalePendingProposal(
+              `Pending proposal was invalidated because authoritative revision freshness could not be confirmed (observed revision ${this.pendingHighWaterRevision}). Reload latest snapshot before proposing changes.`,
+            );
+          }
+          ctx.setAnalysisError(
+            `STALE: Authoritative revision freshness could not be confirmed after bounded reconciliation (pending revision high-water mark: Rev ${this.pendingHighWaterRevision}, loaded: Rev ${latestSnapshot?.libraryRevision ?? 'unknown'}). Reload latest library snapshot before applying further changes.`,
+          );
+        }
+      } else {
+        this.freshnessConfirmed = true;
+        this.pendingHighWaterRevision = null;
+      }
+
       // Reconcile any newer open proposal against the authoritative loaded revision:
       // preserve it (and its paired retainMeta) if still current; invalidate explicitly if stale.
-      if (ctx.isMounted() && latestSnapshot !== null) {
+      if (ctx.isMounted() && latestSnapshot !== null && this.freshnessConfirmed) {
         const activePending = ctx.getActivePendingEntry();
         if (
           activePending &&
@@ -308,7 +446,11 @@ export class RevisionReconciliationController {
       // Publish final commit status notice without hiding legitimate committed transactions.
       if (ctx.isMounted() && isCommittedResult && committedRevision !== null) {
         const latestRev = latestSnapshot?.libraryRevision ?? committedRevision;
-        if (externalRevisionsObserved && latestRev !== committedRevision) {
+        if (!this.freshnessConfirmed && this.pendingHighWaterRevision !== null) {
+          ctx.setStatusNotice(
+            `Saved approved change locally (library revision ${committedRevision}), but subsequent rapid revision updates up to Rev ${this.pendingHighWaterRevision} exceeded bounded reconciliation. Refresh library snapshot to confirm freshness.`,
+          );
+        } else if (externalRevisionsObserved && latestRev !== committedRevision) {
           ctx.setStatusNotice(
             `Saved approved change locally (library revision ${committedRevision}); later library revision ${latestRev} was also reconciled.`,
           );
@@ -323,8 +465,15 @@ export class RevisionReconciliationController {
         }
       }
     } finally {
-      this.observedDuringApply = [];
-      this.observedDuringReconcile = [];
+      if (this.observedDuringApply.length > 0) {
+        this.recordHighWater(this.observedDuringApply);
+        this.observedDuringApply = [];
+      }
+      if (this.observedDuringReconcile.length > 0) {
+        this.recordHighWater(this.observedDuringReconcile);
+        this.observedDuringReconcile = [];
+        this.freshnessConfirmed = false;
+      }
       this.inFlightCommitBatchId = null;
       this.phase = 'idle';
       if (ctx.isMounted()) {
