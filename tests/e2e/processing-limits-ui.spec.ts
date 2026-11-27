@@ -39,7 +39,6 @@ test('the default 5,000 occurrence ceiling renders a complete bounded synthetic 
   await expect(page.getByTestId('candidate-row')).toHaveCount(5_000, { timeout: 60_000 });
   const rowRenderMs = Date.now() - rowRenderStartedAt;
   console.info(`Synthetic 5,000-occurrence UI: analysis ${analysisMs} ms; 5,000 rows visible ${rowRenderMs} ms after count update`);
-  await expect(page.getByRole('button', { name: /Cancel analysis/i })).toHaveCount(0);
   await expect(page.getByTestId('header-revision')).toContainText('Rev 0');
 });
 

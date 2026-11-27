@@ -1,6 +1,6 @@
 # S1 Acceptance Evaluation Report — Gate G3 (Synthetic First Slice)
 
-> **Independent qualification addendum (2026-11-27):** The AI Studio implementation ledger and evidence below are author-provided records, not independent verification. See [WP01 independent qualification](WP01-INDEPENDENT-QUALIFICATION.md) for the source revision, corrective regression evidence, exact local command outputs, and independent A1–C5 matrix. Current independent G3 verdict: **NOT QUALIFIED**. The approved S1 requirement for configurable and visible candidate-count limits remains unresolved; no numeric threshold was invented. G4 remains **NOT READY / BLOCKED** and G5 remains **NOT ESTABLISHED**.
+> **Independent qualification addendum (2026-11-27):** The AI Studio implementation ledger and evidence below are author-provided records, not independent verification. See [WP01 independent qualification](WP01-INDEPENDENT-QUALIFICATION.md) for the source revision, corrective regression evidence, exact local command outputs, and independent A1–C5 matrix. The initial independent review found G3 blocked on processing limits. The final contract-closure addendum below supersedes that interim verdict: G3 **PASS (synthetic)** after implementing the authorized validated limit policy. G4 remains **NOT READY / BLOCKED** and G5 remains **NOT ESTABLISHED**.
 
 **Application:** TermForge (`Centaurioun/Scientific-Lexicon-App`)  
 **Baseline Commit:** `40045aa056cd0033a8c2d4586ee9f8f5fa703230`  
@@ -85,3 +85,8 @@
    npm run test:e2e
    ```
 4. **Git & Review Discipline:** Review complete diff, verify no secrets or real data exist, keep commits organized per WP01 ledger checkpoints, and obtain owner approval prior to merging or opening WP02 / G4 drills.
+
+
+## Final contract-closure addendum (2026-11-27)
+
+The WP01 independent qualification report records the authorized centralized processing-limit policy, regression evidence, final 4/4 dependency gate, 51/51 unit tests, successful typecheck/build, and Playwright 19/19 across 13 spec files. The initial G3 blocker is closed. Final verdict: **G3 PASS (synthetic application correctness)**. The candidate default (5,000) and ceiling (10,000) are provisional engineering settings verified only with bounded synthetic workloads; they are not claims of scientific suitability or production capacity. **G4 remains NOT READY / BLOCKED; G5 remains NOT ESTABLISHED.**

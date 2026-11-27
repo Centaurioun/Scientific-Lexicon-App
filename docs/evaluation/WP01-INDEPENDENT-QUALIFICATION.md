@@ -9,7 +9,7 @@
 
 ## Executive verdict
 
-**G3 synthetic application correctness: NOT QUALIFIED.** The browser-backed functional suite is green after remediation, but the approved S1 limit requirement is not fully met. Input byte/character caps are fixed constants (though rejected-input messages display the limit), no candidate-count limit/configuration exists, and the backup cap is normally surfaced only when an oversized backup is attempted. No numeric candidate-count bound was approved, so this review did not invent one. G3 can be reconsidered after the limit behavior is configured and shown as required, candidate count receives an owner-approved bound with explicit reject/cancel behavior, and the backup size limitation is surfaced before a too-large backup is generated. The existing 2 MiB UTF-8 file, 200,000 UTF-16 input, and 16 MiB backup limits remain in place.
+**Final G3 synthetic application correctness: PASS after the authorized processing-limit contract closure.** The earlier finding that candidate count and limit presentation were incomplete is closed by the processing-limit configuration, in-flight span accounting, visible preference controls and backup size notices described below. G3 is synthetic application correctness only; it does not establish G4 durability or G5 scientific accuracy.
 
 **G4 real-data readiness: NOT READY / BLOCKED.** This review did not use production data or run target-workstation durability, migration, quota, stable-origin, restart, or S3 intake qualification.
 
@@ -32,12 +32,12 @@ A read-only independent code reviewer was asked to inspect the WP01 implementati
 | Source | Branch created from fetched `origin/main` at exact commit `9379062c5554839286bfb6165ee348358157a1a8`; starter `40045aa056cd0033a8c2d4586ee9f8f5fa703230` is the comparison baseline. The full starter-to-WP01 source diff is 63 files, 10,666 insertions, 43 deletions. The existing Scientific-Lexicon-Lab checkout was not modified. |
 | Lockfile | `package-lock.json` SHA-256 `0fa57c7ce340084716277312ce7e6f7d1b36a134857fde6400c97c4629267033`, matching the required value before and after `npm ci`. No dependency versions were edited. |
 | Runtime | macOS arm64; Node `v26.12.1`; npm `11.20.0`. |
-| E2E inventory | The original implementation contains 11 `tests/e2e/*.spec.ts` files, not 10 as the ledger stated. The independent regression adds `multibatch-persistence.spec.ts`, making 12 spec files and 15 tests. |
+| E2E inventory | The original implementation contained 11 `tests/e2e/*.spec.ts` files, not 10 as the ledger stated. Independent regressions added `multibatch-persistence.spec.ts` and `processing-limits-ui.spec.ts`; the final inventory is 13 spec files and 19 tests. |
 | Launcher / preview | `package.json` continues to use `node scripts/dev.mjs`; the launcher regression test is included in the passing unit suite. `next.config.ts` retains the development-only AI Studio `allowedDevOrigins` entries. Production build and Playwright webServer both started successfully. |
 
 ## Contract-by-contract A1–C5 matrix
 
-Status refers to independent inspection and this run's evidence. **PASS** means the reviewed acceptance behavior is covered by code and evidence, subject to the explicit candidate-count blocker below. **PARTIAL** identifies an unsatisfied or not fully qualified requirement.
+Status refers to independent inspection and the final closure run. **PASS** means synthetic acceptance behavior is covered by code and evidence. It does not imply G4 or G5 readiness.
 
 | Task | Independent review result | Evidence and qualification boundary |
 |---|---|---|
@@ -48,14 +48,14 @@ Status refers to independent inspection and this run's evidence. **PASS** means 
 | A5 — Library editor and search | PASS | Browser flows cover empty state, EN/TR creation, homonyms, preview cancellation, search/reload, stale edit, denied storage, and corrected exact label selection. |
 | B1 — Registered matching | PASS within synthetic scope | Unit oracle and browser parity tests cover Unicode boundaries, nested occurrences, ambiguity and revision invalidation. No claim of scientific accuracy. |
 | B2 — Local English NLP adapter | PASS within synthetic scope | Unit/browser tests cover exact UTF-16 slices, worker execution, and no external model download. The fallback path can run synchronous NLP on the main thread if Worker setup fails; large-input responsiveness is not qualified. |
-| B3 — Candidate discovery and unified run | PARTIAL | Grammar, span, cancellation, and input size behavior are tested. Subspan filtering was changed from nested scans to binary search and async generation now yields/checks cancellation. Input caps are fixed constants, and candidate-count limits are absent (no approved numeric value); this is a mandatory unresolved acceptance item. The 40,000-symbol benchmark is synthetic and is not production-scale qualification. |
+| B3 — Candidate discovery and unified run | PASS (synthetic) | Strict validated operational preferences now apply to TXT, pasted text, matcher output and unknown generation. One tracker counts distinct UTF-16 spans across known and new output; it groups ambiguity/duplicate spans once, retains nested spans, and throws before exceeding the configured bound. No partial run is returned. Limits range from 100 to 10,000 occurrences; the 5,000 default and 10,000 ceiling passed bounded synthetic unit and browser workloads. |
 | B4 — Review workflow | PASS within synthetic scope | E2E covers discover/reject/create/link/resolve/approval and stale library behavior. A new regression proves source edits clear old candidate actions (F5). |
 | B5 — Retention and deletion | PASS within synthetic scope | Browser assertions verify session-only data, explicit retention, deletion of retained source/run/provenance pointers, concept preservation, rollback, and zero raw marker in network/audit/backup when not retained. Already downloaded backup copies remain user-controlled and cannot be revoked. |
 | C1 — Deterministic exports | PASS | Existing export tests cover stable projection, Unicode, CSV formula protection, quoting and format separation. Browser workflow downloads TXT/MD/CSV/JSON. |
-| C2 — Portable backup | PASS after correction | Backup validation tests plus UI size-rejection case. Generation now uses the parser's 16 MiB byte limit and refuses over-limit backup instead of claiming success (F2). |
+| C2 — Portable backup | PASS after correction | Backup validation tests plus round-trip regression. Generation and parsing use one centralized 16,777,216-byte maximum and reject rather than truncate. |
 | C3 — Empty-target restore | PASS after correction | Browser tests cover complete restore parity, corrupt/invalid input, abort, non-empty rejection, matcher invalidation and concurrent restore. Concurrent empty restore and malformed existing metadata are covered (F3). |
-| C4 — Export/recovery UI | PASS | Browser workflow verifies download, clear errors and invalid backup rejection; oversized file is rejected before `File.text()` reads it. |
-| C5 — Integrated verification and readiness record | PARTIAL | Full local gates and 15 browser tests pass; actual simultaneous two-tab requests are now concurrent. G4 remains NOT READY, and G3 remains NOT QUALIFIED pending the candidate-count contract. |
+| C4 — Export/recovery UI | PASS | Browser workflow verifies download, clear errors and invalid backup rejection; 16 MiB generation and restore restrictions are shown before either operation, and oversized restore files are rejected before `File.text()` reads them. |
+| C5 — Integrated verification and readiness record | PASS (synthetic) | Full local dependency gate, unit suite, typecheck, production build and 19 browser tests pass, including simultaneous two-tab writes and processing-limit closure. G4 remains NOT READY; G5 remains NOT ESTABLISHED. |
 
 ### Cross-contract review coverage
 
@@ -121,20 +121,37 @@ Commands ran in the environment listed above after source corrections:
 |---|---:|---|
 | `npm ci --ignore-scripts --strict-peer-deps --no-audit --no-fund` | 0 | Added 69 packages; lock hash remained exact. Scripts intentionally disabled during install. |
 | `npm run test:gate` | 0 | 4 tests passed, 0 failed. |
-| `npm run test` | 0 | 12 test files; 38 tests passed, 0 failed. |
+| `npm run test` | 0 | 13 test files; 51 tests passed, 0 failed. |
 | `npm run typecheck` | 0 | `tsc --noEmit`, no diagnostics. |
 | `NEXT_TELEMETRY_DISABLED=1 npm run build` | 0 | Next.js 16.4.6/Turbopack production build; `/`, `/_not-found`, `/exchange`, `/extraction`, `/library` generated. |
-| `npm run test:e2e` | 0 | Playwright 15/15 passed using one worker; actual Chromium browser run included concurrent tabs, IndexedDB, downloads and UI workflow. |
+| `npm run test:e2e` | 0 | Playwright 19/19 passed using one worker across 13 spec files; actual Chromium browser run included concurrent tabs, IndexedDB, downloads and UI workflow. Synthetic 5,000 and 10,000 occurrence UI tests completed analysis in 1,132 ms and 2,050 ms, respectively; full row rendering followed in 175 ms and 345 ms. |
 
-E2E spec reconciliation: 11 specs were present in the author ledger's original inventory, despite its stated count of 10. The independent added regression spec makes 12 spec files and the full run executed 15 test cases.
+E2E spec reconciliation: 11 specs were present in the author ledger's original inventory, despite its stated count of 10. Independent regressions make 13 spec files; the final full run executed 19 test cases.
+
+## Final contract closure — Processing Limits
+
+The previously open B3/G3 limit requirement is closed with the following centralized policy. Inputs are capped at the effective validated setting and reject above it; they are never silently clipped.
+
+| Input/output | Default | Authorized range / hard maximum | Enforcement |
+|---|---:|---:|---|
+| TXT input | 2,097,152 bytes | Configurable downward; hard max 2,097,152 bytes | Declared file size checked before read, actual decoded UTF-16 checked after fatal UTF-8 decode. |
+| Pasted text | 200,000 UTF-16 code units | Configurable downward; hard max 200,000 code units | Explicit validation before analysis. |
+| Distinct grouped candidate occurrences | 5,000 | Configurable 100–10,000; provisional hard ceiling 10,000 | Shared span tracker during incremental matching and unknown discovery. First excess throws; no complete run/proposal is emitted. |
+| Recoverable backup | 16,777,216 bytes | Fixed hard maximum | Same constant for generation and restore; visible before generation/file selection; oversized restore rejected before file read. |
+
+Processing preferences are schema-validated and stored in browser-local operational preferences, outside canonical terminology snapshots and the approved ChangeSet gateway. Unique half-open UTF-16 `(start,end)` spans count once across duplicate known/unknown emissions; ambiguous groups count once; legitimate nested spans remain distinct. Changing a setting invalidates existing analysis. An over-limit or cancelled run has no partial actionable rows and causes no canonical writes.
+
+The 5,000 default and 10,000 ceiling are authorized provisional engineering settings, not scientific or production-capacity claims. A bounded synthetic generator benchmark measured 100 spans in 0.115 ms, 5,000 in 9.828 ms, and 10,000 in 18.845 ms (single local run). In Chromium, 5,000 occurrences analyzed in 1,132 ms and rendered within 175 ms of count update; 10,000 analyzed in 2,050 ms and rendered within 345 ms. Cancellation on a synthetic 180,000-code-unit input left no actionable partial run (browser test 482 ms). These values are observations, not thresholds or production-scale guarantees.
+
+Regression coverage includes below/exact/above configured limits, invalid/out-of-range preferences, duplicate versus distinct spans, nested/ambiguous occurrences, combined known+unknown counting, early termination, cancellation, rejected-run state and canonical revision, and backup size symmetry/visibility/early rejection. Full tests pass as recorded above.
 
 ## Remaining blockers and verdicts
 
-1. **G3:** NOT QUALIFIED until file/input/backup limits are configured and shown at the relevant workflow decision points, and candidate count has an owner-approved bound with explicit reject/cancel behavior. Current 200,000 UTF-16 text cap does not substitute for a candidate-count limit. The contract does not set the numeric candidate cap; this review did not invent one.
-2. **G4:** NOT READY. No real data used. Stable origin, restart/OS reboot durability, real quota exhaustion, realistic migration/blocked-upgrade, production-scale storage/latency, S3 intake controls, and owner sign-off remain outside this run.
-3. **G5:** NOT ESTABLISHED. No labeled scientific corpus, expert review, recall/precision evaluation, or extraction accuracy claim.
-4. Worker failure can fall back to synchronous NLP on the main thread; matcher index rebuild and large-library UI/rendering capacity are not qualified. Candidate output's final sort is synchronous and cannot be interrupted until it completes. The synthetic candidate benchmark is not production capacity evidence.
-5. Previously downloaded backup files are outside application control; deletion of a retained source from IndexedDB cannot revoke old downloaded copies.
+1. **G3 synthetic application correctness: PASS.** All approved WP01 A1–C5 acceptance criteria are covered by independent inspection and the final synthetic command/browser evidence, including the closed processing-limit requirement. This is not a G4 or G5 qualification.
+2. **G4 real-data readiness: NOT READY.** No real data used. Stable origin, restart/OS reboot durability, actual quota exhaustion, migration/blocked-upgrade, realistic scale and storage/latency, S3 intake controls, and owner sign-off remain outside this run.
+3. **G5 scientific extraction accuracy: NOT ESTABLISHED.** No labeled scientific corpus, expert review, recall/precision evaluation, or extraction accuracy claim.
+4. Residual responsiveness limits: if Worker setup fails, NLP may run synchronously on the main thread; matcher index rebuilding and final result sorting are not cancellation-aware. The 10,000 occurrence synthetic workload passed, but larger libraries and production input distributions were not qualified. The matcher uses the pinned `ahocorasick` 1.0.2 transition tables incrementally to avoid materializing an unbounded all-hit list; parity is tested, but the adapter depends on those package internals.
+5. Previously downloaded backups are outside application control; deleting retained data in IndexedDB cannot revoke an old downloaded copy.
 
 No WP02/S2–S7 implementation or G4 production-data qualification was started.
 
@@ -143,6 +160,6 @@ No WP02/S2–S7 implementation or G4 production-data qualification was started.
 - **Branch:** `codex/wp01-independent-verification`
 - **Reviewed source base:** `9379062c5554839286bfb6165ee348358157a1a8`
 - **Qualified starter:** `40045aa056cd0033a8c2d4586ee9f8f5fa703230`
-- **Verified implementation checkpoint:** `ce3519a38acbf23b300d7fc9f4d12ad96a259586` (the exact source and tests that passed the full command matrix above).
+- **Verified implementation checkpoint:** `de2682b9a3a9f277af84a668c1bf1ec9a379f3af` (processing-limit implementation; final verification rerun below).
 - **Final branch tip:** documentation-only qualification publication commit follows the verified implementation checkpoint and is reported in the completion handoff. A report publication commit cannot store its own Git SHA without changing that SHA.
 - **Integration:** not merged; `main` was not modified.

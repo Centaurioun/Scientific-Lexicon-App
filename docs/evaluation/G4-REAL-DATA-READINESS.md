@@ -1,6 +1,6 @@
 # Gate G4 — Real-Data Readiness Assessment (Separate from G3)
 
-> **Independent local update (2026-11-27):** The two-tab conflicting-write E2E now issues the two approvals concurrently, and the full local browser suite passed (15/15). See [WP01 independent qualification](WP01-INDEPENDENT-QUALIFICATION.md). This updates criterion 1's former “Codex confirmation required” note. It does not lift G4: stable origin, process restart, actual quota, migration/blocked-upgrade, realistic scale, S3 intake, and owner approval remain unresolved. Candidate-count limits also remain an S1/G3 contract gap.
+> **Independent local update (2026-11-27):** The two-tab conflicting-write E2E now issues the two approvals concurrently, and the final local browser suite passed (19/19 across 13 spec files). See [WP01 independent qualification](WP01-INDEPENDENT-QUALIFICATION.md). This updates criterion 1's former “Codex confirmation required” note. It does not lift G4: stable origin, process restart, actual quota, migration/blocked-upgrade, realistic scale, S3 intake, and owner approval remain unresolved. The separate processing-limit contract closure is documented in the qualification report; this does not lift any real-data G4 blocker.
 
 **Application:** TermForge (`Centaurioun/Scientific-Lexicon-App`)  
 **Assessment Date:** 2026-11-27  
@@ -30,7 +30,7 @@ Real unpublished manuscripts, real personal terminology lists, and legacy data i
 | **7. Realistic IndexedDB schema migration (`v1 → v2`) & blocked-upgrade drill** | **NOT TESTED** | Currently at Dexie schema `version(1)`. No real v1→v2 upgrade path or multi-tab `versionchange` / `blocked` event drill has been executed yet (no v2 schema exists in S1). Must be validated on a backup copy before any future schema migration touches real data. |
 | **8. Realistic scale & latency stress test (e.g., 10k–50k expressions + 200k-char manuscript)** | **NOT TESTED** | Synthetic functional tests verified small libraries and 200k char boundary rejection (`extraction.test.ts`). Full interactive latency, Worker memory footprint, backup JSON serialization time, and Aho–Corasick index rebuild cost at production lexicon scale remain unmeasured. |
 | **9. S3 Legacy / Personal Data Intake Safeguards** | **BLOCKED (Not Planned/Implemented in WP01)** | Per `MASTER-DESIGN-BASELINE-v1.0.md`, importing legacy spreadsheets/terminology lists requires dedicated S3 staging, diffing, conflict review, and rollback safeguards not included in WP01. |
-| **10. Independent Codex Local Gate (`npm run test:gate` + `npm run test:e2e`)** | **PASS (Local WP01 qualification)** | On 2026-11-27, lockfile hash matched the expected SHA-256; `npm ci`, dependency gate (4/4), unit suite (38/38), typecheck, production build, and Playwright (15/15) passed. G4 remains blocked by the separate criteria above. |
+| **10. Independent Codex Local Gate (`npm run test:gate` + `npm run test:e2e`)** | **PASS (Local WP01 qualification)** | On 2026-11-27, lockfile hash matched the expected SHA-256; `npm ci`, dependency gate (4/4), unit suite (51/51 across 13 files), typecheck, production build, and Playwright (19/19 across 13 spec files) passed. The lockfile SHA-256 remained `0fa57c7ce340084716277312ce7e6f7d1b36a134857fde6400c97c4629267033`. G4 remains blocked by the separate criteria above. |
 
 ---
 
