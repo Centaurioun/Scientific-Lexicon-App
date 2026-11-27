@@ -40,3 +40,6 @@ Owner explicitly approved rc2 at 88fa4acfd2a12ef4daae925c97fdddf8a8d4faae on 202
 
 ## Superseding current application handoff — 2026-11-27
 Historical research-era entries above are preserved, not active tasks. WP01 integrated into private Scientific-Lexicon-App main at 09a505b12db12b5830921120020d3084fe080e8c (G3 synthetic PASS). Read [current conversation handoff](CHATGPT-CONTINUATION-2026-11-27.md) and [WP02 execution plan](../WP02_SCIENTIFIC_INTELLIGENCE.md). G4 NOT READY; G5 NOT ESTABLISHED. Existing AI Studio app, manual pull and WP02 short prompt next.
+
+## Superseding application checkpoint — WP02 final acceptance and WP03 start (2026-11-27)
+WP02 qualified within bounded synthetic scope (DOCX excluded) at `f7857d8d9e11fbcd5e40b1731f8ad52217ea54fd` after 148/148 native tests in Actions run 46042674468. [Acceptance](../evaluation/WP02-FINAL-QUALIFICATION.md). Next execute [combined handoff](WP02-CLOSE-WP03-START.md), [WP03 plan](../WP03_DATA_OPERATIONS.md) and [design](../superpowers/specs/2026-11-27-wp03-data-operations-design.md). Current update is documentation only; no WP03 implementation yet. G4 NOT READY, G5 NOT ESTABLISHED, release NOT APPROVED. No real data, no WP04; owner handles sync. Historical continuation instructions preserved but superseded for phase authority.

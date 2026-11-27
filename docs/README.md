@@ -23,3 +23,6 @@ The linked baseline, contract, plans and workflow are copied verbatim from the a
 
 ## Current checkpoint — WP02
 WP01 G3 synthetic PASS integrated at `09a505b12db12b5830921120020d3084fe080e8c`. [WP01 independent qualification](evaluation/WP01-INDEPENDENT-QUALIFICATION.md). Next [WP02 Scientific Intelligence execution plan](WP02_SCIENTIFIC_INTELLIGENCE.md), [design and six-cycle decision](superpowers/specs/2026-11-27-wp02-scientific-intelligence-design.md), [current ChatGPT continuation](handoffs/CHATGPT-CONTINUATION-2026-11-27.md). G4 NOT READY; G5 NOT ESTABLISHED. Owner manually pulls and sends task; no WP02 implementation in this documentation commit.
+
+## Current checkpoint — WP02 closed / WP03 start
+[WP02 final bounded acceptance](evaluation/WP02-FINAL-QUALIFICATION.md) at `f7857d8d9e11fbcd5e40b1731f8ad52217ea54fd`; [WP03 Data Operations](WP03_DATA_OPERATIONS.md), [design](superpowers/specs/2026-11-27-wp03-data-operations-design.md), [single execution handoff](handoffs/WP02-CLOSE-WP03-START.md). Prior checkpoint sections historical. G4 NOT READY; G5 NOT ESTABLISHED; no release. Owner manually pulls and supplies combined prompt.

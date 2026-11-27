@@ -49,3 +49,6 @@ Real unpublished manuscripts, real personal terminology lists, and legacy data i
 3. Manual workstation G4 drills pass and are logged: full browser restart durability, real storage-persistence verification, realistic scale sample timing, and backup-restore drill on a separate clean profile.
 4. S3 intake safeguards are separately planned, implemented, and approved before any bulk import of existing personal terminology lists.
 5. Explicit human owner sign-off on Gate G4.
+
+## WP02 transition update — 2026-11-27
+Independent native GitHub Actions (not Codex-specific) passed at `f7857d8d9e11fbcd5e40b1731f8ad52217ea54fd`, run 46042674468: npm ci, 4/4 gate, 114 unit, 28 E2E, 2 production observations, typecheck/build/audit/lock integrity. Criterion 10 evidence refreshed only for this commit. [WP02 bounded acceptance](WP02-FINAL-QUALIFICATION.md). [WP03 E1–E11](../WP03_DATA_OPERATIONS.md) authorizes synthetic development of intake safeguards and additional operational probes, not real intake. Criterion 9 is planned, not yet implemented; remaining actual origin/restart/quota/migration/scale/rights/approval blockers remain. G4 NOT READY. No real data.
