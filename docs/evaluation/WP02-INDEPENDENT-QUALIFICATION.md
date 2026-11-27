@@ -8,7 +8,7 @@ This report independently reproduces the pinned Gemini WP02 implementation, reco
 
 - Repository: `Centaurioun/Scientific-Lexicon-App` (`https://github.com/Centaurioun/Scientific-Lexicon-App.git`). The initially open workspace was the separate `Scientific-Lexicon-Lab` repo and was left untouched.
 - Qualification branch: `codex/wp02-independent-qualification`, created from pinned Gemini revision `2e4a5894e92f3439330aa019d337ac04a08b794f`.
-- Final implementation checkpoint: `c8236ba974dc95211b5f2e1c94361c516c4ed71c` (required commands rerun on this source tree). A documentation-only publication commit follows it; the branch tip is included in the delivery handoff.
+- Final implementation checkpoint: `6b8736b6186fc4f5d7e78197188f1139ad0d095e` (required commands rerun on this source tree). A documentation-only publication commit follows it; the branch tip is included in the delivery handoff.
 - WP01 baseline `09a505b12db12b5830921120020d3084fe080e8c` and WP02 spec checkpoint `41473feec38708c34902dc3710ed00569c791198` are ancestors of the pinned implementation. Remote `main` was at the pinned Gemini SHA at initial inspection; the separate Lab checkout's local `main` was three commits behind its own `origin/main`.
 - Environment: macOS 27.0 ARM64; Node `v26.12.1`; npm `11.20.0`; Playwright `1.65.1`; Next `16.4.6`; Chromium headless through Playwright.
 - Initial `npm ci`: exit 0, 69 packages added, 70 audited, 0 vulnerabilities. npm warned that `fsevents@2.3.3` install scripts were not approved; no script approval or dependency change was made.
@@ -30,7 +30,7 @@ Confirmed corrections on the qualification branch:
 8. The historical S1/source-order vs S2/C-value comparison confounded grammar and ranking and compared cold S1 to warm S2. It now evaluates all six grammar/ranking combinations on the same fixtures with NLP warmed before the matrix. The historical table is retained and labeled uncontrolled.
 9. Independent review found repeated token windows in one longer surface were counted as separate C-value containers. A regression produced RED at `4.5` versus the distinct-container result `13/3`; the index now deduplicates each container surface per candidate token sequence. Review also found a library revision invalidation could strand the UI in an analyzing state; revision invalidation now aborts the request and explicitly clears that state. The factorial test now checks every rank-independent full-set metric.
 
-Regression evidence: new/expanded unit and E2E cases cover required URI, pre-read oversize rejection, malformed UTF-8, extraction and dictionary coordinate mismatch, mixed line endings, full-run ranking, explicit token spans, repeated nested windows, an independent pairwise C-value oracle, ranking workloads, out-of-order file loads, and the integrated restore confirmation wait. No test assertion was weakened.
+Regression evidence: new/expanded unit and E2E cases cover required URI, pre-read oversize rejection, malformed UTF-8, extraction and dictionary coordinate mismatch, mixed line endings, full-run ranking, explicit token spans, repeated nested windows, an independent pairwise C-value oracle, ranking workloads, out-of-order file loads, clearing a pack during delayed upload, dense repeated-surface dictionary results, evaluation span/input validation, and the integrated restore confirmation wait. No test assertion was weakened.
 
 ## Six-cycle execution notes
 
@@ -58,7 +58,7 @@ A read-only Luna/medium review of implementation checkpoint `04603e9` returned t
 | D7 browser performance & cancellation | PARTIAL | Real Chromium full UI runs at 5k/10k repeated synthetic occurrences and limit/cancel E2E pass. High distinct-type browser workload, pack stress, worker failure/cross-request cancellation matrix, all stage timing, and measured memory/main-thread responsiveness are incomplete. |
 | D8 UI state & proposals | PARTIAL | Stale file, proposal, analysis error, and revision invalidation guards; out-of-order file E2E. Delayed proposal, pack-clear race, all approval/revision interleavings, keyboard accessibility and homonym navigation were not fully qualified. |
 | D9 lookup & navigation | PASS within existing scope | `s2-lookup` browser test passes for literal versus case-insensitive view. |
-| D10 evaluation harness | PARTIAL | Existing unit tests pass; no exhaustive independent audit of duplicate/macro/micro/empty-denominator/concept/false-rejection/at-k/leakage semantics. |
+| D10 evaluation harness | PASS for synthetic harness semantics | Fail-closed validation checks safe UTF-16 spans, duplicate/conflicting annotations and mappings, document correspondence, K values and elapsed times. Factorial tests assert TP/FP/FN, micro/macro P/R/F1 and unknown/nested recall invariance across ranking modes. This does not establish G5 or expert annotation validity. |
 | D11 controlled comparison | PASS for synthetic factorial | Six configurations and same synthetic fixture/library/limits; results below. Not a gold or holdout evaluation. |
 | D12 integrated verification/privacy/recovery | PARTIAL | Unit/build/gate/E2E pass. Full source-transmission audit across every worker and restored context, pack stress isolation, and every canonical snapshot/backup semantic invariant in one integrated workflow remain incomplete. |
 
@@ -69,15 +69,15 @@ A read-only Luna/medium review of implementation checkpoint `04603e9` returned t
 | `npm ci` | PASS; exit 0; 0 vulnerabilities reported |
 | `npm run test:gate` | PASS; 4/4 |
 | `npm run typecheck` | PASS; exit 0 |
-| `npm run test` | PASS; 88/88 across 22 files |
+| `npm run test` | PASS; 91/91 across 22 files |
 | `NEXT_TELEMETRY_DISABLED=1 NODE_ENV=production npm run build` | PASS; exit 0 |
-| `npm run test:e2e` | PASS; 24/24 |
+| `npm run test:e2e` | PASS; 25/25 |
 | `npm audit --audit-level=moderate` | PASS; 0 vulnerabilities |
 | `git diff --check` | PASS; no whitespace errors |
 | `trail check` | PASS; no conflicts (0 learnings indexed) |
 | Lock SHA before/after | PASS; required SHA unchanged |
 
-Final browser full-suite performance observations in this environment: repeated synthetic workload at 5,000 spans analyzed in 1,056 ms with rows visible 160 ms after count update; 10,000 analyzed in 1,860 ms with rows visible 312 ms after count update. These tests use repeated patterns, not high distinct-type diversity. Separate ranking-only Vitest measurements: repeated 5k 1.39 ms, diverse 5k 7.39 ms, repeated 10k 2.84 ms, diverse 10k 15.61 ms. These are single-run observations, not thresholds or capacity claims.
+Final browser full-suite performance observations in this environment: repeated synthetic workload at 5,000 spans analyzed in 1,063 ms with rows visible 156 ms after count update; 10,000 analyzed in 1,849 ms with rows visible 310 ms after count update. These tests use repeated patterns, not high distinct-type diversity. Separate ranking-only Vitest measurements: repeated 5k 1.39 ms, diverse 5k 7.39 ms, repeated 10k 2.84 ms, diverse 10k 15.61 ms. These are single-run observations, not thresholds or capacity claims.
 
 ## Controlled synthetic comparison
 
@@ -111,5 +111,5 @@ Next engineering action: complete the remaining D2/D4/D6-D8/D10/Q5/Q9 matrices, 
 
 - Branch: `codex/wp02-independent-qualification`.
 - Pinned source base: `2e4a5894e92f3439330aa019d337ac04a08b794f`.
-- Implementation checkpoint: `c8236ba974dc95211b5f2e1c94361c516c4ed71c`. The final documentation publication commit is identified in the delivery handoff because a report cannot contain its own commit SHA without changing that SHA.
+- Implementation checkpoint: `6b8736b6186fc4f5d7e78197188f1139ad0d095e`; final branch tip is the documentation publication commit following it. The final documentation publication commit is identified in the delivery handoff because a report cannot contain its own commit SHA without changing that SHA.
 - Integration: not merged. Main was not modified.

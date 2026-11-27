@@ -56,6 +56,19 @@ Environment: macOS ARM64, Node `v26.12.1`, npm `11.20.0`, Playwright `1.65.1`; b
 | D9 | PASS within existing tests | Literal and case-insensitive lookup E2E passed; no new changes to lookup semantics. |
 | D10 | PARTIAL | Existing unit suite passed; complete independent metric, duplicate, at-k, concept mapping, false-rejection, and leakage audit not completed. |
 | D11 | PASS for bounded synthetic factorial | Replaced confounded evaluation with S1/S2 × source-order/frequency/C-value, identical inputs and warmed NLP. No generalization claim. |
-| D12 | NOT QUALIFIED | Final dependency gate 4/4, unit tests 88/88, typecheck, production build, and Playwright 24/24 pass. Q2/Q4/Q5/Q6/Q7/Q8 mandatory evidence gaps remain. See independent qualification report. |
+| D12 | NOT QUALIFIED | Final dependency gate 4/4, unit tests 91/91, typecheck, production build, and Playwright 25/25 pass. Q2/Q4/Q5/Q6/Q7/Q8 mandatory evidence gaps remain. See independent qualification report. |
 
 The Gemini D1–D12 completion entries above are historical claims and are not upgraded to independent PASS by this addendum.
+
+
+### Independent Qualification Follow-up (2026-11-27)
+
+The independent remediation branch extends the original ledger evidence; the original Google AI Studio entries above remain historical. Final native verification on the remediation tree passed: dependency gate 4/4, unit 91/91 across 22 files, typecheck, production build, Playwright 25/25, and npm audit with zero vulnerabilities.
+
+| Requirement | Independent status | Added evidence / remaining limits |
+|---|---|---|
+| D2 | PARTIAL | Added exact UTF-16 slices for combining marks and supplementary-plane characters with CRLF; full malformed Markdown/fuzz matrix remains incomplete. |
+| D6 | PARTIAL | Added 100-ID repeated-surface / 2,000-hit stress fixture and browser test clearing a pack during delayed upload. Arbitrary schema-valid packs remain importable; synthetic-only enforcement and rights verification remain unresolved. |
+| D8 | PARTIAL | Delayed pack upload invalidation now has browser coverage; delayed proposal and full policy/revision interleavings, accessibility and homonym workflows remain incomplete. |
+| D10 | PASS for synthetic harness semantics | Fail-closed UTF-16 span, annotation consistency, document correspondence, K and elapsed-time validation. This does not establish G5 or gold annotation validity. |
+| D12 | NOT QUALIFIED | Gate 4/4, unit 91/91, typecheck/build pass, Playwright 25/25; Q2/Q4/Q5/Q6/Q8/Q9 mandatory gaps remain. See `docs/evaluation/WP02-INDEPENDENT-QUALIFICATION.md`. |
