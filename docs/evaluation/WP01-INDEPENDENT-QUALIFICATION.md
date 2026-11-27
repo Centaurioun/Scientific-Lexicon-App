@@ -29,7 +29,7 @@ A read-only independent code reviewer was asked to inspect the WP01 implementati
 
 | Item | Independent evidence |
 |---|---|
-| Source | Branch created from fetched `origin/main` at exact commit `9379062c5554839286bfb6165ee348358157a1a8`; starter `40045aa056cd0033a8c2d4586ee9f8f5fa703230` is the comparison baseline. The existing Scientific-Lexicon-Lab checkout was not modified. |
+| Source | Branch created from fetched `origin/main` at exact commit `9379062c5554839286bfb6165ee348358157a1a8`; starter `40045aa056cd0033a8c2d4586ee9f8f5fa703230` is the comparison baseline. The full starter-to-WP01 source diff is 63 files, 10,666 insertions, 43 deletions. The existing Scientific-Lexicon-Lab checkout was not modified. |
 | Lockfile | `package-lock.json` SHA-256 `0fa57c7ce340084716277312ce7e6f7d1b36a134857fde6400c97c4629267033`, matching the required value before and after `npm ci`. No dependency versions were edited. |
 | Runtime | macOS arm64; Node `v26.12.1`; npm `11.20.0`. |
 | E2E inventory | The original implementation contains 11 `tests/e2e/*.spec.ts` files, not 10 as the ledger stated. The independent regression adds `multibatch-persistence.spec.ts`, making 12 spec files and 15 tests. |
