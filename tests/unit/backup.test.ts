@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { createBackup, validateBackup } from '@/domain/backup';
+import {
+  createBackup,
+  MAX_BACKUP_FILE_BYTES,
+  parseBackupFileText,
+  serializeBackupFile,
+  validateBackup,
+} from '@/domain/backup';
 import { formatExport, selectExportRows } from '@/application/exchange';
 import { createEmptySnapshot, type LibrarySnapshot } from '@/domain/schema';
 
@@ -114,6 +120,24 @@ describe('complete portable backup validation (C2)', () => {
     const validated = await validateBackup(JSON.parse(JSON.stringify(backup)));
     expect(validated.snapshot).toEqual(backup.snapshot);
     expect(validated.digest).toBe(backup.digest);
+  });
+
+  it('refuses to offer a backup larger than the parser can restore and rejects oversized text before JSON parsing', async () => {
+    const largeSnapshot: LibrarySnapshot = {
+      ...createEmptySnapshot(),
+      documents: Array.from({ length: 90 }, (_, index) => ({
+        id: `doc-${index}`,
+        title: `Synthetic retained source ${index}`,
+        text: 'x'.repeat(200_000),
+        createdAt: TS,
+      })),
+    };
+    const backup = await createBackup(largeSnapshot);
+    expect(() => serializeBackupFile(backup)).toThrow(/maximum restore size|maximum recoverable backup size/i);
+
+    await expect(parseBackupFileText('x'.repeat(MAX_BACKUP_FILE_BYTES + 1))).rejects.toThrow(
+      /maximum parse limit/i,
+    );
   });
 
   it('rejects wrong digest, unsupported version, unknown fields, non-JSON, presentation exports, duplicate IDs, orphan expressions, bad spans, and invalid history', async () => {

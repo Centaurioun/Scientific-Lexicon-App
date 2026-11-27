@@ -63,6 +63,8 @@ test('Dexie repository enforces all atomic transaction and integrity invariants 
     protectedLanguageStatus: 'protected',
     abortedStatus: 'aborted',
     snapshotUnchangedAfterAbort: true,
-    twoConnectionStaleStatus: 'stale',
+    simultaneousAppliedCount: 1,
+    simultaneousStaleCount: 1,
+    simultaneousNoSilentDataLoss: true,
   });
 });

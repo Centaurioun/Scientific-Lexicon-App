@@ -8,7 +8,9 @@ import {
 } from '@/adapters/storage/dexie-library';
 import {
   createBackup,
+  MAX_BACKUP_FILE_BYTES,
   parseBackupFileText,
+  serializeBackupFile,
   type BackupEnvelope,
 } from '@/application/exchange';
 import { approveRestore, restoreEmptyLibrary } from '@/application/library';
@@ -60,7 +62,7 @@ export function BackupPanel({ snapshot, disabled, onRestored }: BackupPanelProps
     setBackupInfo(null);
     try {
       const envelope = await createBackup(snapshot);
-      const serialized = JSON.stringify(envelope, null, 2);
+      const serialized = serializeBackupFile(envelope);
       const stamp = new Date().toISOString().replace(/[:.]/g, '-');
       const filename = `termforge-backup-rev${snapshot.libraryRevision}-${stamp}.json`;
       triggerUtf8Download(filename, serialized, 'application/json');
@@ -83,6 +85,13 @@ export function BackupPanel({ snapshot, disabled, onRestored }: BackupPanelProps
     setRestoreNotice(null);
     setValidatedRestore(null);
     setRestoreFilename(file.name);
+
+    if (file.size > MAX_BACKUP_FILE_BYTES) {
+      setRestoreError(
+        `Selected backup exceeds the ${(MAX_BACKUP_FILE_BYTES / (1024 * 1024)).toFixed(0)} MiB maximum size and was rejected without reading.`,
+      );
+      return;
+    }
 
     try {
       const text = await file.text();

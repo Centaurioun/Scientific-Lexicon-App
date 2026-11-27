@@ -1,3 +1,4 @@
+import Dexie from 'dexie';
 import { RevisionCachedRegisteredMatcher } from '@/adapters/matching/registered-matcher';
 import { DexieLibraryRepository } from '@/adapters/storage/dexie-library';
 import {
@@ -8,7 +9,8 @@ import {
   restoreEmptyLibrary,
 } from '@/application/library';
 import { createBackup } from '@/domain/backup';
-import type { ChangePayload } from '@/domain/changes';
+import { canonicalJson, type ChangePayload } from '@/domain/changes';
+import { createEmptySnapshot } from '@/domain/schema';
 
 const TS = '2026-11-26T12:00:00.000Z';
 
@@ -20,6 +22,11 @@ export interface RestoreVerificationReport {
   targetStillEmptyAfterAbort: boolean;
   concurrentSuccessCount: number;
   concurrentConflictCount: number;
+  concurrentEmptyBackupSuccessCount: number;
+  concurrentEmptyBackupConflictCount: number;
+  emptyBackupStateIntact: boolean;
+  corruptedMetadataStatus: string;
+  corruptedMetadataPreserved: boolean;
   matcherInvalidatedAfterRestore: boolean;
 }
 
@@ -33,6 +40,9 @@ export async function runRestoreInvariants(prefix: string): Promise<RestoreVerif
   });
   const raceRepo1 = new DexieLibraryRepository(`${prefix}-race`);
   const raceRepo2 = new DexieLibraryRepository(`${prefix}-race`);
+  const emptyRaceRepo1 = new DexieLibraryRepository(`${prefix}-empty-race`);
+  const emptyRaceRepo2 = new DexieLibraryRepository(`${prefix}-empty-race`);
+  const corruptRepo = new DexieLibraryRepository(`${prefix}-corrupt-meta`);
 
   try {
     // Seed source DB through approved gateway
@@ -113,6 +123,39 @@ export async function runRestoreInvariants(prefix: string): Promise<RestoreVerif
     const concurrentSuccessCount = raceStatuses.filter((s) => s === 'applied').length;
     const concurrentConflictCount = raceStatuses.filter((s) => s === 'conflict').length;
 
+    // An empty backup still claims the empty target. The first restore writes
+    // metadata; the concurrent second restore must not report a second apply.
+    const emptyBackup = await createBackup(createEmptySnapshot());
+    const [emptyRaceA, emptyRaceB] = await Promise.all([
+      restoreEmptyLibrary(emptyRaceRepo1, emptyBackup, approveRestore(emptyBackup)),
+      restoreEmptyLibrary(emptyRaceRepo2, emptyBackup, approveRestore(emptyBackup)),
+    ]);
+    const emptyRaceStatuses = [emptyRaceA.status, emptyRaceB.status];
+    const concurrentEmptyBackupSuccessCount = emptyRaceStatuses.filter((status) => status === 'applied').length;
+    const concurrentEmptyBackupConflictCount = emptyRaceStatuses.filter((status) => status === 'conflict').length;
+    const emptyRaceSnapshot = await emptyRaceRepo1.snapshot();
+    const emptyBackupStateIntact = canonicalJson(emptyRaceSnapshot) === canonicalJson(emptyBackup.snapshot);
+
+    // Malformed existing metadata must be reported and preserved, never replaced.
+    const corruptDb = new Dexie(`${prefix}-corrupt-meta`);
+    corruptDb.version(1).stores({
+      meta: 'key', concepts: 'id', expressions: 'id, conceptId', assertions: 'id, expressionId',
+      provenance: 'id, expressionId', documents: 'id', runs: 'id, documentId', batches: 'batchId', audit: 'id, batchId, &opId',
+    });
+    await corruptDb.open();
+    await corruptDb.table('meta').put({ key: 'library', schemaVersion: 99, libraryRevision: 0 });
+    corruptDb.close();
+    const corruptedMetadataResult = await restoreEmptyLibrary(corruptRepo, backup, approveRestore(backup));
+    const inspectCorruptDb = new Dexie(`${prefix}-corrupt-meta`);
+    inspectCorruptDb.version(1).stores({
+      meta: 'key', concepts: 'id', expressions: 'id, conceptId', assertions: 'id, expressionId',
+      provenance: 'id, expressionId', documents: 'id', runs: 'id, documentId', batches: 'batchId', audit: 'id, batchId, &opId',
+    });
+    await inspectCorruptDb.open();
+    const preservedMeta = await inspectCorruptDb.table('meta').get('library');
+    inspectCorruptDb.close();
+    const corruptedMetadataPreserved = preservedMeta?.schemaVersion === 99 && preservedMeta?.libraryRevision === 0;
+
     return {
       exactSnapshotMatch,
       nonEmptyRestoreStatus: secondRes.status,
@@ -121,6 +164,11 @@ export async function runRestoreInvariants(prefix: string): Promise<RestoreVerif
       targetStillEmptyAfterAbort,
       concurrentSuccessCount,
       concurrentConflictCount,
+      concurrentEmptyBackupSuccessCount,
+      concurrentEmptyBackupConflictCount,
+      emptyBackupStateIntact,
+      corruptedMetadataStatus: corruptedMetadataResult.status,
+      corruptedMetadataPreserved,
       matcherInvalidatedAfterRestore,
     };
   } finally {
@@ -129,10 +177,15 @@ export async function runRestoreInvariants(prefix: string): Promise<RestoreVerif
     abortRepo.close();
     raceRepo1.close();
     raceRepo2.close();
+    emptyRaceRepo1.close();
+    emptyRaceRepo2.close();
+    corruptRepo.close();
     await srcRepo.deleteDatabaseForTest();
     await dstRepo.deleteDatabaseForTest();
     await abortRepo.deleteDatabaseForTest();
     await raceRepo1.deleteDatabaseForTest();
+    await emptyRaceRepo1.deleteDatabaseForTest();
+    await corruptRepo.deleteDatabaseForTest();
   }
 }
 

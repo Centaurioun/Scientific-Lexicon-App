@@ -86,7 +86,7 @@ describe('unknown scientific candidate discovery and unified extraction run (B3)
     expect(discovered.map((o) => o.surface)).toContain('TNF-α');
   });
 
-  it('excludes numeric-only spans and never produces cross-sentence spans', () => {
+  it('excludes numeric-only spans and never produces cross-sentence spans', async () => {
     const text = 'Sample 2026 cells. Bone matrix grows.';
     const tokens: Token[] = [
       { start: 0, end: 6, surface: 'Sample', pos: 'NOUN', sentenceId: 0 },
@@ -99,7 +99,7 @@ describe('unknown scientific candidate discovery and unified extraction run (B3)
       { start: 36, end: 37, surface: '.', pos: 'PUNCT', sentenceId: 1 },
     ];
     const gen = new S1CandidateGenerator();
-    const spans = gen.generate(text, tokens);
+    const spans = await gen.generate(text, tokens);
     const surfaces = spans.map((s) => s.surface);
 
     expect(surfaces).not.toContain('2026');
@@ -108,6 +108,53 @@ describe('unknown scientific candidate discovery and unified extraction run (B3)
     for (const s of spans) {
       expect(text.slice(s.start, s.end)).toBe(s.surface);
     }
+  });
+
+  it('preserves candidate output across many repeated scientific-symbol spans', async () => {
+    const termCount = 40_000;
+    const text = Array.from({ length: termCount }, () => 'CD4+').join(' ');
+    const tokens: Token[] = Array.from({ length: termCount }, (_, index) => {
+      const start = index * 5;
+      return { start, end: start + 4, surface: 'CD4+', pos: 'NOUN', sentenceId: 0 };
+    });
+    const started = performance.now();
+    const actual = await new S1CandidateGenerator().generate(text, tokens);
+    const elapsedMs = performance.now() - started;
+
+    const expected: Array<{ start: number; end: number; surface: string }> = [];
+    for (let i = 0; i < tokens.length; i += 1) {
+      for (let j = i; j < Math.min(tokens.length, i + 8); j += 1) {
+        const start = tokens[i].start;
+        const end = tokens[j].end;
+        expected.push({ start, end, surface: text.slice(start, end) });
+      }
+    }
+    expected.sort(
+      (left, right) => left.start - right.start || right.end - left.end,
+    );
+    console.info(`Synthetic candidate generation: ${termCount} repeated symbols in ${elapsedMs.toFixed(2)} ms`);
+    expect(actual).toHaveLength(319_972);
+    expect(actual).toEqual(expected);
+  });
+
+  it('yields during candidate generation so cancellation can stop remaining work', async () => {
+    const termCount = 4_000;
+    const text = Array.from({ length: termCount }, () => 'CD4+').join(' ');
+    const tokens: Token[] = Array.from({ length: termCount }, (_, index) => {
+      const start = index * 5;
+      return { start, end: start + 4, surface: 'CD4+', pos: 'NOUN', sentenceId: 0 };
+    });
+    const controller = new AbortController();
+    const generate = new S1CandidateGenerator().generate.bind(new S1CandidateGenerator()) as unknown as (
+      source: string,
+      sourceTokens: readonly Token[],
+      signal: AbortSignal,
+    ) => Promise<unknown>;
+    const pending = generate(text, tokens, controller.signal);
+    setTimeout(() => controller.abort(), 0);
+
+    expect(pending).toBeInstanceOf(Promise);
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
   });
 
   it('enforces 2 MiB file cap, 200k UTF-16 text cap, fatal UTF-8 decoding, and cancellation without silent truncation', async () => {

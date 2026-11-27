@@ -72,7 +72,32 @@ export async function validateBackup(input: unknown): Promise<BackupEnvelope> {
   });
 }
 
+export function serializeBackupFile(backup: BackupEnvelope): string {
+  const serialized = JSON.stringify(backup, null, 2);
+  // UTF-8 byte size is never smaller than JavaScript's UTF-16 code-unit count.
+  // Reject that obvious oversize case before allocating an additional byte buffer.
+  if (serialized.length > MAX_BACKUP_FILE_BYTES) {
+    throw new Error(
+      `Backup exceeds the ${(MAX_BACKUP_FILE_BYTES / (1024 * 1024)).toFixed(0)} MiB maximum restore size and cannot be offered as a recoverable backup.`,
+    );
+  }
+  const bytes = new TextEncoder().encode(serialized).byteLength;
+  if (bytes > MAX_BACKUP_FILE_BYTES) {
+    throw new Error(
+      `Backup is ${(bytes / (1024 * 1024)).toFixed(2)} MiB; the maximum recoverable backup size is ${(MAX_BACKUP_FILE_BYTES / (1024 * 1024)).toFixed(0)} MiB.`,
+    );
+  }
+  return serialized;
+}
+
 export async function parseBackupFileText(rawText: string): Promise<BackupEnvelope> {
+  // UTF-8 uses at least one byte per UTF-16 code unit; avoid encoding a very
+  // large string just to reject it for exceeding the file-size limit.
+  if (rawText.length > MAX_BACKUP_FILE_BYTES) {
+    throw new Error(
+      `Backup file exceeds the ${(MAX_BACKUP_FILE_BYTES / (1024 * 1024)).toFixed(0)} MiB maximum parse limit.`,
+    );
+  }
   const bytes = new TextEncoder().encode(rawText).byteLength;
   if (bytes > MAX_BACKUP_FILE_BYTES) {
     throw new Error(

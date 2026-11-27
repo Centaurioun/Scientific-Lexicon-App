@@ -1,11 +1,21 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { MAX_BACKUP_FILE_BYTES } from '../../src/domain/backup';
 
 test.describe('C4: Export and recovery workspace', () => {
   test('downloads TXT/MD/CSV/JSON exports, creates backup, rejects invalid file, refuses non-empty restore, and restores into empty DB', async ({
     page,
     context,
   }) => {
+    await page.addInitScript(() => {
+      const originalText = File.prototype.text;
+      Object.defineProperty(window, '__backupFileTextReads', { value: 0, writable: true });
+      File.prototype.text = function () {
+        const state = window as unknown as { __backupFileTextReads: number };
+        state.__backupFileTextReads += 1;
+        return originalText.call(this);
+      };
+    });
     const consoleLogs: string[] = [];
     const requests: string[] = [];
     page.on('console', (msg) => consoleLogs.push(msg.text()));
@@ -90,6 +100,21 @@ test.describe('C4: Export and recovery workspace', () => {
     await expect(page.locator('main').getByRole('alert').first()).toContainText(
       /Backup validation \/ restore error/i,
     );
+
+    const fileReadsBeforeOversized = await page.evaluate(
+      () => (window as unknown as { __backupFileTextReads: number }).__backupFileTextReads,
+    );
+    await page.getByLabel(/Select portable backup file/i).setInputFiles({
+      name: 'oversized-backup.json',
+      mimeType: 'application/json',
+      buffer: Buffer.alloc(MAX_BACKUP_FILE_BYTES + 1, 0x20),
+    });
+    await expect(page.locator('main').getByRole('alert').first()).toContainText(
+      /exceeds the 16 MiB maximum size and was rejected without reading/i,
+    );
+    await expect.poll(() => page.evaluate(
+      () => (window as unknown as { __backupFileTextReads: number }).__backupFileTextReads,
+    )).toBe(fileReadsBeforeOversized);
 
     // Valid backup file into NON-EMPTY target must show preview, and confirm must refuse overwrite
     await page.getByLabel(/Select portable backup file/i).setInputFiles({

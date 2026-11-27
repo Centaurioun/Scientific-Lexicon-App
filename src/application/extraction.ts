@@ -24,6 +24,7 @@ const START_POS = new Set<CanonicalPos>(['ADJ', 'NOUN', 'PROPN']);
 const END_POS = new Set<CanonicalPos>(['NOUN', 'PROPN']);
 const INTERNAL_POS = new Set<CanonicalPos>(['ADJ', 'NOUN', 'PROPN', 'ADP', 'DET']);
 const MAX_PHRASE_TOKENS = 8;
+const GENERATION_YIELD_INTERVAL = 2_048;
 
 const HAS_LETTER_RE = /\p{L}/u;
 const HAS_DIGIT_RE = /\p{N}/u;
@@ -61,7 +62,8 @@ function isQualifiedScientificSymbol(surface: string): boolean {
 }
 
 export class S1CandidateGenerator implements CandidateGenerator {
-  generate(text: string, tokens: readonly Token[]): Span[] {
+  async generate(text: string, tokens: readonly Token[], signal?: AbortSignal): Promise<Span[]> {
+    throwIfAborted(signal);
     const bySpan = new Map<string, Span>();
 
     const addSpan = (start: number, end: number) => {
@@ -76,8 +78,22 @@ export class S1CandidateGenerator implements CandidateGenerator {
 
     // 1. Bounded raw scientific-symbol spans first (exact UTF-16 slices)
     const symbolSpans: Span[] = [];
-    RAW_SYMBOL_CANDIDATE_RE.lastIndex = 0;
-    let match = RAW_SYMBOL_CANDIDATE_RE.exec(text);
+    // Use a per-run regex: yielding below lets independent analyses interleave.
+    const rawSymbolCandidateRegex = new RegExp(
+      RAW_SYMBOL_CANDIDATE_RE.source,
+      RAW_SYMBOL_CANDIDATE_RE.flags,
+    );
+    let processedSinceYield = 0;
+    const checkpoint = async () => {
+      processedSinceYield += 1;
+      if (processedSinceYield >= GENERATION_YIELD_INTERVAL) {
+        processedSinceYield = 0;
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        throwIfAborted(signal);
+      }
+    };
+
+    let match = rawSymbolCandidateRegex.exec(text);
     while (match !== null) {
       const surface = match[0];
       const start = match.index;
@@ -86,16 +102,32 @@ export class S1CandidateGenerator implements CandidateGenerator {
         addSpan(start, end);
         symbolSpans.push({ start, end, surface });
       }
-      match = RAW_SYMBOL_CANDIDATE_RE.exec(text);
+      await checkpoint();
+      match = rawSymbolCandidateRegex.exec(text);
     }
 
-    const isStrictSubSpanOfSymbol = (start: number, end: number): boolean =>
-      symbolSpans.some(
-        (sym) => sym.start <= start && end <= sym.end && (start > sym.start || end < sym.end),
+    // Global regex matches are sorted and non-overlapping. Find the last match
+    // starting at or before the candidate instead of scanning every symbol.
+    const isStrictSubSpanOfSymbol = (start: number, end: number): boolean => {
+      let low = 0;
+      let high = symbolSpans.length;
+      while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        if (symbolSpans[middle].start <= start) low = middle + 1;
+        else high = middle;
+      }
+      const symbol = symbolSpans[low - 1];
+      return Boolean(
+        symbol &&
+          symbol.start <= start &&
+          end <= symbol.end &&
+          (start > symbol.start || end < symbol.end),
       );
+    };
 
     // 2. Deterministic POS noun-phrase grammar (1-8 tokens within a single sentence)
     for (let i = 0; i < tokens.length; i += 1) {
+      await checkpoint();
       const startToken = tokens[i];
       if (!START_POS.has(startToken.pos)) continue;
 
@@ -116,6 +148,7 @@ export class S1CandidateGenerator implements CandidateGenerator {
       }
     }
 
+    throwIfAborted(signal);
     return Array.from(bySpan.values()).sort(compareSpans);
   }
 }
@@ -152,7 +185,7 @@ export async function analyzeText(
 
   throwIfAborted(options.signal);
 
-  const candidateSpans = generator.generate(text, tokens);
+  const candidateSpans = await generator.generate(text, tokens, options.signal);
   throwIfAborted(options.signal);
 
   const bySpan = new Map<string, Occurrence>();

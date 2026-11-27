@@ -20,7 +20,9 @@ export interface StorageVerificationReport {
   protectedLanguageStatus: string;
   abortedStatus: string;
   snapshotUnchangedAfterAbort: boolean;
-  twoConnectionStaleStatus: string;
+  simultaneousAppliedCount: number;
+  simultaneousStaleCount: number;
+  simultaneousNoSilentDataLoss: boolean;
   persistenceSupport: boolean;
 }
 
@@ -386,9 +388,18 @@ export async function runDexieStorageInvariants(dbName: string): Promise<Storage
         },
       ],
     });
-    const resConnA = await applyChange(repoA, propA, approveChange(propA));
-    if (resConnA.status !== 'applied') throw new Error('Expected conn A applied');
-    const resConnB = await applyChange(repoB, propB, approveChange(propB));
+    // Launch both independently approved Rev 3 proposals in the same turn so
+    // digesting and IndexedDB transaction acquisition overlap in real Chromium.
+    const [resConnA, resConnB] = await Promise.all([
+      applyChange(repoA, propA, approveChange(propA)),
+      applyChange(repoB, propB, approveChange(propB)),
+    ]);
+    const concurrentSnapshot = await repoA.snapshot();
+    const concurrentAppliedCount = [resConnA, resConnB].filter((result) => result.status === 'applied').length;
+    const concurrentStaleCount = [resConnA, resConnB].filter((result) => result.status === 'stale').length;
+    const concurrentNoSilentDataLoss = concurrentSnapshot.concepts.filter(
+      (concept) => concept.id === 'c-conn-a' || concept.id === 'c-conn-b',
+    ).length === 1;
 
     return {
       emptyRevision: empty.libraryRevision,
@@ -406,7 +417,9 @@ export async function runDexieStorageInvariants(dbName: string): Promise<Storage
       protectedLanguageStatus: protLangRes.status,
       abortedStatus: abortRes.status,
       snapshotUnchangedAfterAbort,
-      twoConnectionStaleStatus: resConnB.status,
+      simultaneousAppliedCount: concurrentAppliedCount,
+      simultaneousStaleCount: concurrentStaleCount,
+      simultaneousNoSilentDataLoss: concurrentNoSilentDataLoss,
       persistenceSupport: typeof navigator !== 'undefined' && Boolean(navigator.storage?.persist),
     };
   } finally {

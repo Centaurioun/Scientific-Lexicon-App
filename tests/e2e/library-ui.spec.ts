@@ -29,8 +29,8 @@ test.describe('bilingual terminology library workspace (A5)', () => {
     // Create English-only TNF-α
     await page.getByRole('button', { name: 'New concept' }).click();
     await page.getByLabel('Initial expression text').fill('TNF-α');
-    await page.getByLabel('Language').selectOption('en');
-    await page.getByLabel('Role').selectOption('preferred');
+    await page.getByLabel('Language', { exact: true }).selectOption('en');
+    await page.getByLabel('Role', { exact: true }).selectOption('preferred');
     await page.getByRole('button', { name: 'Preview change' }).click();
     await page.getByRole('button', { name: 'Approve and save' }).click();
 
@@ -57,8 +57,8 @@ test.describe('bilingual terminology library workspace (A5)', () => {
     for (let i = 0; i < 2; i += 1) {
       await page.getByRole('button', { name: 'New concept' }).click();
       await page.getByLabel('Initial expression text').fill('PD');
-      await page.getByLabel('Language').selectOption('en');
-      await page.getByLabel('Role').selectOption('abbreviation');
+      await page.getByLabel('Language', { exact: true }).selectOption('en');
+      await page.getByLabel('Role', { exact: true }).selectOption('abbreviation');
       await page.getByRole('button', { name: 'Preview change' }).click();
       await page.getByRole('button', { name: 'Approve and save' }).click();
     }

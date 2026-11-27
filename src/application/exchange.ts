@@ -15,6 +15,7 @@ export {
   createBackup,
   MAX_BACKUP_FILE_BYTES,
   parseBackupFileText,
+  serializeBackupFile,
   parseRestoreApproval,
   validateBackup,
   type BackupEnvelope,

@@ -23,18 +23,35 @@ test.describe('C5 / G4: Real-data readiness probes (separate from G3)', () => {
     await tabB.getByRole('button', { name: 'Preview change' }).click();
     await expect(tabB.getByRole('dialog')).toBeVisible();
 
-    // Tab A applies first -> Rev 1
-    await tabA.getByRole('button', { name: 'Approve and save' }).click();
-    await expect(tabA.getByText('CD4+')).toBeVisible();
+    // Submit both approvals concurrently from separate tabs. Which transaction
+    // wins is intentionally unspecified; the loser must fail closed as stale.
+    await Promise.all([
+      tabA.getByRole('button', { name: 'Approve and save' }).click(),
+      tabB.getByRole('button', { name: 'Approve and save' }).click(),
+    ]);
+    await Promise.all([
+      expect(tabA.getByRole('dialog', { name: 'Review and approve change' })).toBeHidden(),
+      expect(tabB.getByRole('dialog', { name: 'Review and approve change' })).toBeHidden(),
+    ]);
+    await expect.poll(async () => {
+      const staleAlerts = await Promise.all([
+        tabA.locator('main').getByRole('alert').allTextContents(),
+        tabB.locator('main').getByRole('alert').allTextContents(),
+      ]);
+      return staleAlerts.flat().filter((text) => /stale/i.test(text)).length;
+    }).toBe(1);
 
-    // Tab B now attempts to apply its stale Rev 0 proposal -> must fail closed as STALE
-    await tabB.getByRole('button', { name: 'Approve and save' }).click();
-    await expect(tabB.locator('main').getByRole('alert').first()).toContainText(/stale/i);
-
-    // Reload Tab B and verify Tab A's committed record is intact and Tab B's stale record was NOT written
-    await tabB.reload();
-    await expect(tabB.getByText('CD4+')).toBeVisible();
-    await expect(tabB.getByText('IL-6')).toHaveCount(0);
+    // Both tabs must converge on the one committed record after reload.
+    await Promise.all([tabA.reload(), tabB.reload()]);
+    const visibleCounts = await Promise.all([
+      tabA.getByText('CD4+', { exact: true }).count(),
+      tabA.getByText('IL-6', { exact: true }).count(),
+    ]);
+    expect(visibleCounts.reduce((sum, count) => sum + count, 0)).toBe(1);
+    await expect(tabA.getByTestId('library-revision')).toContainText('Rev 1');
+    await expect(tabB.getByTestId('library-revision')).toContainText('Rev 1');
+    expect(await tabB.getByText('CD4+', { exact: true }).count()).toBe(visibleCounts[0]);
+    expect(await tabB.getByText('IL-6', { exact: true }).count()).toBe(visibleCounts[1]);
   });
 
   test('displays explicit browser storage persistence status and origin-isolation warning', async ({

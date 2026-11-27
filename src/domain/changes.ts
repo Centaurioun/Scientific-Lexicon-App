@@ -769,20 +769,25 @@ export function evaluateChangeOnSnapshot(
     newAuditEntries,
     deletedDocumentIdList,
     deletedRunIdList,
-    createdConcepts,
+    // A record may be created and then updated later in the same approved
+    // changeset. The adapter inserts creates, so persist the final evaluated
+    // value in that insert rather than a stale revision-0 value.
+    createdConcepts: createdConcepts.map((created) => concepts.get(created.id) ?? created),
     updatedConcepts: Array.from(updatedConceptsMap.values()).filter(
       (c) => !createdConcepts.some((created) => created.id === c.id),
     ),
-    createdExpressions,
+    createdExpressions: createdExpressions.map((created) => expressions.get(created.id) ?? created),
     updatedExpressions: Array.from(updatedExpressionsMap.values()).filter(
       (e) => !createdExpressions.some((created) => created.id === e.id),
     ),
     createdAssertions,
-    createdProvenance,
+    // Retained-source deletion can clear provenance created earlier in this batch.
+    createdProvenance: createdProvenance.map((created) => provenance.get(created.id) ?? created),
     updatedProvenance: Array.from(updatedProvenanceMap.values()).filter(
       (p) => !createdProvenance.some((created) => created.id === p.id),
     ),
-    createdDocuments,
-    createdRuns,
+    // A source and run may be retained and deleted again within one batch.
+    createdDocuments: createdDocuments.filter((created) => documents.has(created.id)),
+    createdRuns: createdRuns.filter((created) => runs.has(created.id)),
   };
 }

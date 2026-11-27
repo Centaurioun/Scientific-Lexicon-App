@@ -35,7 +35,7 @@ export interface RegisteredMatcher {
 }
 
 export interface CandidateGenerator {
-  generate(text: string, tokens: readonly Token[]): Span[];
+  generate(text: string, tokens: readonly Token[], signal?: AbortSignal): Promise<Span[]>;
 }
 
 export interface ExtractionRun {

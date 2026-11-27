@@ -35,3 +35,16 @@ test('extraction review discovers unknown candidates on empty library, supports 
   await page.getByRole('tab', { name: /Known forms/i }).click();
   await expect(page.getByTestId('candidate-row').filter({ hasText: 'TNF-α' })).toBeVisible();
 });
+
+test('changing source text clears previous run results and disables old candidate actions', async ({ page }) => {
+  await page.goto('/extraction');
+  const source = page.getByLabel('English scientific source text');
+  await source.fill('Synthetic source A contains TNF-α.');
+  await page.getByRole('button', { name: 'Analyze locally' }).click();
+  const oldCandidate = page.getByTestId('candidate-row').filter({ hasText: 'TNF-α' });
+  await expect(oldCandidate).toBeVisible();
+
+  await source.fill('Synthetic source B contains IL-6.');
+  await expect(page.getByTestId('candidate-row')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Create concept' })).toHaveCount(0);
+});

@@ -114,6 +114,30 @@ export function ExtractionWorkspace() {
     }
   }, [run, sourceText]);
 
+  const handleSourceTextChange = (nextText: string) => {
+    if (nextText === sourceText) return;
+    abortRef.current?.abort();
+    abortRef.current = null;
+    requestSeqRef.current += 1;
+    setAnalyzing(false);
+    setSourceText(nextText);
+    setAnalysisError(null);
+    setPendingProposal(null);
+    setPendingRetainMeta(null);
+    setRetainedRunLink(null);
+    setRetentionConsent(false);
+    setRetentionTitle('');
+
+    if (run) {
+      setRun(null);
+      clearSessionExtractionRun();
+      setSelectedOccurrenceId(null);
+      setRejectedIds(new Set());
+      setSessionResolvedMap(new Map());
+      setStatusNotice('Source changed. Previous analysis and review state were cleared; analyze the updated text before acting.');
+    }
+  };
+
   const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -121,12 +145,11 @@ export function ExtractionWorkspace() {
 
     setAnalysisError(null);
     setStatusNotice(null);
+    handleSourceTextChange('');
     try {
       const decoded = await readTxt(file);
       setSourceText(decoded);
-      if (!retentionTitle) {
-        setRetentionTitle(file.name.replace(/\.txt$/i, '') || 'Local TXT source');
-      }
+      setRetentionTitle(file.name.replace(/\.txt$/i, '') || 'Local TXT source');
       setStatusNotice(
         `Loaded "${file.name}" (${decoded.length.toLocaleString('en-US')} UTF-16 chars) into session memory only.`,
       );
@@ -540,7 +563,8 @@ export function ExtractionWorkspace() {
               id="source-text-area"
               className="textarea"
               value={sourceText}
-              onChange={(event) => setSourceText(event.target.value)}
+              onChange={(event) => handleSourceTextChange(event.target.value)}
+              disabled={applying}
               placeholder="Paste synthetic English scientific text (e.g., Periodontal ligament stem cells express TNF-α and CD4+ markers.)"
             />
           </div>
@@ -553,6 +577,7 @@ export function ExtractionWorkspace() {
                 type="file"
                 accept=".txt,text/plain"
                 className="input"
+                disabled={applying}
                 onChange={(event) => void handleFileChange(event)}
               />
             </div>

@@ -44,6 +44,11 @@ test('atomic empty-target restore enforces all integrity, rollback, concurrency,
     targetStillEmptyAfterAbort: true,
     concurrentSuccessCount: 1,
     concurrentConflictCount: 1,
+    concurrentEmptyBackupSuccessCount: 1,
+    concurrentEmptyBackupConflictCount: 1,
+    emptyBackupStateIntact: true,
+    corruptedMetadataStatus: 'invalid',
+    corruptedMetadataPreserved: true,
     matcherInvalidatedAfterRestore: true,
   });
 });

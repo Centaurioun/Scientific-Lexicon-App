@@ -419,7 +419,7 @@ export class DexieLibraryRepository implements RecoveryRepository {
     try {
       const txResult = await this.db.transaction('rw', [...this.allTables], async () => {
         const [
-          meta,
+          metadataRows,
           conceptsCount,
           expressionsCount,
           assertionsCount,
@@ -429,7 +429,7 @@ export class DexieLibraryRepository implements RecoveryRepository {
           batchesCount,
           auditCount,
         ] = await Promise.all([
-          this.db.meta.get('library'),
+          this.db.meta.toArray(),
           this.db.concepts.count(),
           this.db.expressions.count(),
           this.db.assertions.count(),
@@ -439,6 +439,22 @@ export class DexieLibraryRepository implements RecoveryRepository {
           this.db.batches.count(),
           this.db.audit.count(),
         ]);
+
+        const metadataIsCorrupted =
+          metadataRows.length > 1 ||
+          metadataRows.some(
+            (record) =>
+              record.key !== 'library' ||
+              record.schemaVersion !== 1 ||
+              !Number.isSafeInteger(record.libraryRevision) ||
+              record.libraryRevision < 0,
+          );
+        if (metadataIsCorrupted) {
+          return {
+            status: 'invalid' as const,
+            reason: 'Target library metadata is malformed or corrupted; restore refuses to overwrite it.',
+          };
+        }
 
         const totalExisting =
           conceptsCount +
@@ -450,11 +466,11 @@ export class DexieLibraryRepository implements RecoveryRepository {
           batchesCount +
           auditCount;
 
-        if (totalExisting > 0 || (meta && meta.libraryRevision !== 0)) {
+        if (totalExisting > 0 || metadataRows.length > 0) {
           return {
             status: 'conflict' as const,
             reason:
-              'Target library is not empty (existing records or non-zero revision detected). Restore refuses to overwrite an existing library.',
+              'Target library is not empty (records or metadata already exist). Restore refuses to overwrite an existing library.',
           };
         }
 
@@ -488,11 +504,7 @@ export class DexieLibraryRepository implements RecoveryRepository {
           schemaVersion: 1,
           libraryRevision: snap.libraryRevision,
         };
-        if (meta) {
-          await this.db.meta.where('key').equals('library').modify(metaRecord);
-        } else {
-          await this.db.meta.add(metaRecord);
-        }
+        await this.db.meta.add(metaRecord);
 
         if (this.options.afterWritesBeforeCommit) {
           this.options.afterWritesBeforeCommit();
