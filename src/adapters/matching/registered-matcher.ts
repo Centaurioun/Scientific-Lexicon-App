@@ -296,6 +296,7 @@ export class SimpleOracleRegisteredMatcher implements RegisteredMatcher {
     const collector = new OccurrenceCollector(newTracker(options));
     let processed = 0;
     for (const [pattern, exprs] of byPattern.entries()) {
+      throwIfAborted(options?.signal);
       let searchFrom = 0;
       while (searchFrom <= text.length - pattern.length) {
         const start = text.indexOf(pattern, searchFrom);

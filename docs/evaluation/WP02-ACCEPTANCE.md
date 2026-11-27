@@ -22,3 +22,21 @@
 - **Dependency & Lock Discipline:** Exact 15 dependencies in `package.json` unchanged; `package-lock.json` was NOT fabricated or modified.
 - **Local-Only Privacy:** Zero external API calls, zero server document processing, zero analytics/telemetry, zero authentication; verified `0` external network requests in live headless Chromium.
 - **Scope Boundary:** Stopped cleanly before WP03 (no S3 bulk import, S4 AI enrichment, Phrasebank, Turkish NLP, accounts, or cloud storage).
+
+## 3. Independent Native Qualification Addendum (2026-11-27)
+
+The Gemini figures above are preserved as historical implementation evidence. Independent native reproduction on Node `v26.12.1` / npm `11.20.0` found 80/80 unit tests passing initially, but the native Playwright suite exposed a timing defect in the new integrated restore test (it navigated away before waiting for the restore success state). The test was corrected to await the UI confirmation. Independent remediation and final commands are recorded in [WP02 Independent Qualification](WP02-INDEPENDENT-QUALIFICATION.md).
+
+Final independent verification on the remediation tree: dependency gate 4/4; unit tests 91/91; typecheck pass; production build pass; Playwright 25/25. These results qualify only the tested local synthetic scope. They do not clear DOCX G1, synthetic-only pack enforcement, full pipeline browser performance coverage, G4, G5, or release readiness. Final verdict: **NOT QUALIFIED — REMEDIATION REQUIRED** because mandatory tasks remain unresolved. The evaluation harness now fails closed on invalid spans and inconsistent annotation inputs; details and evidence are in the independent report.
+
+---
+
+## 4. AI Studio Qualification Closure Addendum (`QC01–QC09`, 2026-11-27)
+
+Historical Sections 1–3 above are preserved unchanged. Following verified application of the pinned Codex transfer (`a935c186f27e829d42f5370b3840391e8fe64ed4`, 21 files applied + `next-env.d.ts` verified matching), all mandatory closure packages (`QC01`–`QC07`, plus `QC08` DOCX exclusion confirmation and `QC09` reconciliation) were implemented and self-verified in Google AI Studio.
+
+- **AI Studio Verification Summary:** `npm run typecheck` PASS; `npm run test` **24 files / 109 tests PASS**; production Next.js build PASS; HTTP `200` on all 4 routes; live headless Chromium (`playwright-cli`) QC06 performance matrix & QC07 privacy/backup-restore sentinel audit PASS (`0` console errors, `0` external requests, exact canonical backup equivalence).
+- **Environment-Blocked Native Checks:** `npm run test:gate` (`1/4 PASS`, `3/4 FAIL` on absent `package-lock.json` in Bun container — NOT fabricated; `package.json` exact 15 packages confirmed unchanged) and native `npm run test:e2e` (`27` tests in `18` specs listed; blocked by `.next/dev/lock` collision on port 3000).
+- **Unchanged Gate Boundaries:** D3 DOCX `BLOCKED—CONDITIONAL/EXCLUDED`; G4 `NOT READY`; G5 `NOT ESTABLISHED`; release `NOT APPROVED`; WP03 untouched.
+- **Closure Verdict:** **`IMPLEMENTED — INDEPENDENT QUALIFICATION PENDING`** — full matrix and raw evidence recorded in [WP02 AI Studio Closure Report](WP02-AI-STUDIO-CLOSURE.md).
+

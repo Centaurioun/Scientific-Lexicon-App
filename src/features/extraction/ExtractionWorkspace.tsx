@@ -16,12 +16,12 @@ import {
 } from '@/application/library';
 import { parseDocumentText, readDocument } from '@/application/document-input';
 import { rankCandidates } from '@/application/ranking';
+import { readDictionaryPackFile } from '@/application/dictionary-pack-file';
 import { AppHeader } from '@/components/AppHeader';
 import { ChangeApprovalDialog } from '@/components/ChangeApprovalDialog';
 import type { CandidateGrammarMode } from '@/domain/candidate-evidence';
 import type { ChangePayload, ProposedChange } from '@/domain/changes';
 import {
-  parseDictionaryPackJson,
   type DictionaryPack,
 } from '@/domain/dictionary-pack';
 import type { DocumentFormat } from '@/domain/document-input';
@@ -46,7 +46,22 @@ import {
   getSessionExtractionRun,
   setSessionExtractionRun,
 } from './session-run-store';
+import {
+  evaluateCommitSettlement,
+  shouldApplyProposalResult,
+  shouldApplySnapshotLoad,
+  shouldHandleExternalRevision,
+  type RetainedRunMeta,
+} from './concurrency-controller';
 import { SourceContext } from './SourceContext';
+
+const CANDIDATE_FILTER_ORDER: readonly CandidateFilter[] = [
+  'all',
+  'new-candidate',
+  'known-form',
+  'ambiguous',
+  'possible-new-form',
+];
 
 export function ExtractionWorkspace() {
   const [snapshot, setSnapshot] = useState<LibrarySnapshot | null>(null);
@@ -81,24 +96,27 @@ export function ExtractionWorkspace() {
   // Explicit opt-in retention state (session-only by default!)
   const [retentionTitle, setRetentionTitle] = useState('');
   const [retentionConsent, setRetentionConsent] = useState(false);
-  const [retainedRunLink, setRetainedRunLink] = useState<{
-    documentId: string;
-    runId: string;
-    forRunId: string;
-  } | null>(null);
+  const [retainedRunLink, setRetainedRunLink] = useState<RetainedRunMeta | null>(null);
 
   const [pendingProposal, setPendingProposal] = useState<ProposedChange | null>(null);
-  const [pendingRetainMeta, setPendingRetainMeta] = useState<{
-    documentId: string;
-    runId: string;
-    forRunId: string;
-  } | null>(null);
+  const [pendingRetainMeta, setPendingRetainMeta] = useState<RetainedRunMeta | null>(null);
   const [applying, setApplying] = useState(false);
 
   const nlpRef = useRef<BrowserLocalNlpEngine | null>(null);
   const matcherRef = useRef<RevisionCachedRegisteredMatcher | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(true);
   const requestSeqRef = useRef(0);
+  const proposalSeqRef = useRef(0);
+  const packUploadSeqRef = useRef(0);
+  const snapshotLoadSeqRef = useRef(0);
+  const inFlightCommitBatchIdRef = useRef<string | null>(null);
+  const activeRunIdRef = useRef<string | null>(run?.id ?? null);
+  const pendingProposalRef = useRef<ProposedChange | null>(pendingProposal);
+  const tabButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  activeRunIdRef.current = run?.id ?? null;
+  pendingProposalRef.current = pendingProposal;
 
   if (!nlpRef.current) {
     nlpRef.current = new BrowserLocalNlpEngine();
@@ -108,29 +126,52 @@ export function ExtractionWorkspace() {
   }
 
   const loadSnapshot = useCallback(async () => {
+    const loadSeq = ++snapshotLoadSeqRef.current;
     setLoadingLibrary(true);
     setStorageError(null);
     try {
       const repo = getBrowserLibraryRepository();
       const loaded = await listLibrary(repo);
+      if (!shouldApplySnapshotLoad({ mounted: mountedRef.current, capturedLoadSeq: loadSeq, currentLoadSeq: snapshotLoadSeqRef.current })) {
+        return;
+      }
       setSnapshot(loaded);
     } catch (error) {
+      if (!shouldApplySnapshotLoad({ mounted: mountedRef.current, capturedLoadSeq: loadSeq, currentLoadSeq: snapshotLoadSeqRef.current })) {
+        return;
+      }
       setStorageError(
         error instanceof Error ? error.message : 'Unable to open browser IndexedDB library.',
       );
       setSnapshot(null);
     } finally {
-      setLoadingLibrary(false);
+      if (shouldApplySnapshotLoad({ mounted: mountedRef.current, capturedLoadSeq: loadSeq, currentLoadSeq: snapshotLoadSeqRef.current })) {
+        setLoadingLibrary(false);
+      }
     }
   }, []);
 
   useEffect(() => {
+    mountedRef.current = true;
     void loadSnapshot();
     const repo = getBrowserLibraryRepository();
     const unsub = repo.subscribeRevision(() => {
+      if (!shouldHandleExternalRevision({ inFlightCommitBatchId: inFlightCommitBatchIdRef.current })) {
+        return;
+      }
       matcherRef.current?.invalidate();
+      abortRef.current?.abort();
+      abortRef.current = null;
+      requestSeqRef.current += 1;
+      proposalSeqRef.current += 1;
+      setAnalyzing(false);
+      setPendingProposal(null);
+      setPendingRetainMeta(null);
+      setStatusNotice('Library revision changed; active extraction and pending proposals were invalidated.');
+      void loadSnapshot();
     });
     return () => {
+      mountedRef.current = false;
       unsub();
       abortRef.current?.abort();
       nlpRef.current?.terminate();
@@ -225,10 +266,12 @@ export function ExtractionWorkspace() {
   };
 
   const handleDictionaryPackUpload = async (file: File) => {
+    const contextSeq = requestSeqRef.current;
+    const uploadSeq = ++packUploadSeqRef.current;
     setPackError(null);
     try {
-      const raw = await file.text();
-      const validated = parseDictionaryPackJson(raw);
+      const validated = await readDictionaryPackFile(file);
+      if (contextSeq !== requestSeqRef.current || uploadSeq !== packUploadSeqRef.current) return;
       clearActiveRunForPolicyChange();
       setDictionaryPack(validated);
       setSessionDictionaryPack(validated);
@@ -236,11 +279,13 @@ export function ExtractionWorkspace() {
         `Loaded session-only dictionary pack "${validated.name}" (${validated.entries.length} entries; read-only, never writes library).`,
       );
     } catch (error) {
+      if (contextSeq !== requestSeqRef.current || uploadSeq !== packUploadSeqRef.current) return;
       setPackError(error instanceof Error ? error.message : 'Unable to validate dictionary pack.');
     }
   };
 
   const handleClearDictionaryPack = () => {
+    packUploadSeqRef.current += 1;
     clearActiveRunForPolicyChange();
     setDictionaryPack(null);
     setUsePackAsHints(false);
@@ -259,11 +304,28 @@ export function ExtractionWorkspace() {
     event.target.value = '';
     if (!file) return;
 
+    abortRef.current?.abort();
+    abortRef.current = null;
+    proposalSeqRef.current += 1;
+    setAnalyzing(false);
     setAnalysisError(null);
     setStatusNotice(null);
-    handleSourceTextChange('');
+    setPendingProposal(null);
+    setPendingRetainMeta(null);
+    setRetainedRunLink(null);
+    setRetentionConsent(false);
+    setRetentionTitle('');
+    setRun(null);
+    clearSessionExtractionRun();
+    setSelectedOccurrenceId(null);
+    setRejectedIds(new Set());
+    setSessionResolvedMap(new Map());
+    setSourceText('');
+
+    const loadSeq = ++requestSeqRef.current;
     try {
       const parsedDoc = await readDocument(file, processingLimits);
+      if (!mountedRef.current || loadSeq !== requestSeqRef.current) return;
       const nextFormat: Exclude<DocumentFormat, 'docx'> =
         parsedDoc.format === 'markdown' ? 'markdown' : 'txt';
       setInputFormat(nextFormat);
@@ -273,6 +335,7 @@ export function ExtractionWorkspace() {
         `Loaded "${file.name}" (${parsedDoc.format}, ${parsedDoc.text.length.toLocaleString('en-US')} UTF-16 chars) into session memory only.`,
       );
     } catch (error) {
+      if (!mountedRef.current || loadSeq !== requestSeqRef.current) return;
       setAnalysisError(error instanceof Error ? error.message : 'Unable to read local document file.');
     }
   };
@@ -331,6 +394,7 @@ export function ExtractionWorkspace() {
         `Analyzed locally (${result.algorithmVersion}, ${parsedDoc.format}) at library revision ${result.libraryRevision}: ${result.occurrences.length} occurrence spans identified (session-only; not persisted).`,
       );
     } catch (error) {
+      if (seq !== requestSeqRef.current) return;
       if (error instanceof DOMException && error.name === 'AbortError') {
         setStatusNotice('In-flight analysis cancelled.');
       } else {
@@ -348,6 +412,7 @@ export function ExtractionWorkspace() {
     abortRef.current = null;
     requestSeqRef.current += 1;
     setAnalyzing(false);
+    setStatusNotice('In-flight analysis cancelled.');
   };
 
   const handleClearSession = () => {
@@ -370,10 +435,29 @@ export function ExtractionWorkspace() {
     return selectCandidates(run, filter);
   }, [run, filter]);
 
-  const rankedGroups = useMemo(() => {
-    if (visibleOccurrences.length === 0) return [];
-    return rankCandidates(visibleOccurrences, rankMode);
-  }, [visibleOccurrences, rankMode]);
+  const rankingResult = useMemo(() => {
+    if (!run || run.occurrences.length === 0) {
+      return { groups: [], error: null as string | null };
+    }
+    try {
+      // Corpus statistics are based on the full analysis run; the table applies its display filter.
+      return {
+        groups: rankCandidates(run.occurrences, rankMode, run.tokens),
+        error: null as string | null,
+      };
+    } catch (error) {
+      return {
+        groups: [],
+        error:
+          error instanceof Error
+            ? error.message
+            : 'Candidate ranking failed closed for this workload.',
+      };
+    }
+  }, [run, rankMode]);
+
+  const rankedGroups = rankingResult.groups;
+  const rankingError = rankingResult.error;
 
   const counts = useMemo(() => {
     if (!run) {
@@ -407,16 +491,40 @@ export function ExtractionWorkspace() {
 
   const openProposal = async (
     payload: ChangePayload,
-    retainMeta: { documentId: string; runId: string; forRunId: string } | null = null,
+    retainMeta: RetainedRunMeta | null = null,
   ) => {
     if (!snapshot) return;
+    const contextSeq = requestSeqRef.current;
+    const proposalSeq = ++proposalSeqRef.current;
     setAnalysisError(null);
     setStatusNotice(null);
     try {
       const proposal = await proposeChange(snapshot, payload);
+      if (
+        !shouldApplyProposalResult({
+          mounted: mountedRef.current,
+          capturedContextSeq: contextSeq,
+          currentContextSeq: requestSeqRef.current,
+          capturedProposalSeq: proposalSeq,
+          currentProposalSeq: proposalSeqRef.current,
+        })
+      ) {
+        return;
+      }
       setPendingProposal(proposal);
       setPendingRetainMeta(retainMeta);
     } catch (error) {
+      if (
+        !shouldApplyProposalResult({
+          mounted: mountedRef.current,
+          capturedContextSeq: contextSeq,
+          currentContextSeq: requestSeqRef.current,
+          capturedProposalSeq: proposalSeq,
+          currentProposalSeq: proposalSeqRef.current,
+        })
+      ) {
+        return;
+      }
       setAnalysisError(error instanceof Error ? error.message : 'Unable to prepare change proposal.');
     }
   };
@@ -602,38 +710,87 @@ export function ExtractionWorkspace() {
   };
 
   const handleApproveAndSave = async () => {
-    if (!pendingProposal) return;
+    const proposal = pendingProposal;
+    if (!proposal || inFlightCommitBatchIdRef.current !== null) return;
+    const retainMeta = pendingRetainMeta;
+    const commitContextSeq = requestSeqRef.current;
+    const commitBatchId = proposal.payload.batchId;
+
+    inFlightCommitBatchIdRef.current = commitBatchId;
     setApplying(true);
     setAnalysisError(null);
     setStatusNotice(null);
     try {
       const repo = getBrowserLibraryRepository();
-      const approval = approveChange(pendingProposal);
-      const result = await applyChange(repo, pendingProposal, approval);
+      const approval = approveChange(proposal);
+      const result = await applyChange(repo, proposal, approval);
 
-      if (result.status === 'applied' || result.status === 'replay') {
-        const appliedRetain = pendingRetainMeta;
-        setPendingProposal(null);
-        setPendingRetainMeta(null);
+      const isCommittedResult = result.status === 'applied' || result.status === 'replay';
+      const plan = evaluateCommitSettlement({
+        resultStatus: result.status,
+        committedRevision: isCommittedResult ? result.revision : -1,
+        commitBatchId,
+        activePendingBatchId: pendingProposalRef.current?.payload.batchId ?? null,
+        capturedContextSeq: commitContextSeq,
+        currentContextSeq: requestSeqRef.current,
+        activeRunId: activeRunIdRef.current,
+        capturedRetainMeta: retainMeta,
+      });
+
+      if (plan.shouldInvalidateMatcher) {
         matcherRef.current?.invalidate();
-        if (appliedRetain) {
-          setRetainedRunLink(appliedRetain);
-        }
-        await loadSnapshot();
-        setStatusNotice(
-          `Saved approved change locally (library revision ${result.revision}). Re-analyze if you want matcher states refreshed against the new revision.`,
-        );
-      } else {
-        setPendingProposal(null);
+      }
+      if (mountedRef.current && plan.shouldClearPendingProposal) {
+        setPendingProposal((cur) => (cur?.payload.batchId === commitBatchId ? null : cur));
         setPendingRetainMeta(null);
+      }
+
+      if (isCommittedResult && plan.committed) {
+        if (mountedRef.current && plan.shouldAttachRetainedRunLink && retainMeta) {
+          setRetainedRunLink(retainMeta);
+        }
+        if (plan.shouldReloadSnapshot) {
+          await loadSnapshot();
+        }
+        if (mountedRef.current) {
+          setStatusNotice(
+            plan.viewStaleAfterCommit
+              ? `Saved approved change locally (library revision ${result.revision}). Active source view changed while saving; stale run link was not attached.`
+              : `Saved approved change locally (library revision ${result.revision}). Re-analyze if you want matcher states refreshed against the new revision.`,
+          );
+        }
+      } else if (!isCommittedResult && mountedRef.current) {
         setAnalysisError(`${result.status.toUpperCase()}: ${result.reason}`);
       }
     } catch (error) {
-      setPendingProposal(null);
-      setPendingRetainMeta(null);
-      setAnalysisError(error instanceof Error ? error.message : 'Unable to apply approved change.');
+      if (mountedRef.current) {
+        setPendingProposal((cur) => (cur?.payload.batchId === commitBatchId ? null : cur));
+        setPendingRetainMeta(null);
+        setAnalysisError(error instanceof Error ? error.message : 'Unable to apply approved change.');
+      }
     } finally {
-      setApplying(false);
+      inFlightCommitBatchIdRef.current = null;
+      if (mountedRef.current) {
+        setApplying(false);
+      }
+    }
+  };
+
+  const handleFilterTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    let nextIndex: number | null = null;
+    if (event.key === 'ArrowRight') {
+      nextIndex = (index + 1) % CANDIDATE_FILTER_ORDER.length;
+    } else if (event.key === 'ArrowLeft') {
+      nextIndex = (index - 1 + CANDIDATE_FILTER_ORDER.length) % CANDIDATE_FILTER_ORDER.length;
+    } else if (event.key === 'Home') {
+      nextIndex = 0;
+    } else if (event.key === 'End') {
+      nextIndex = CANDIDATE_FILTER_ORDER.length - 1;
+    }
+    if (nextIndex !== null) {
+      event.preventDefault();
+      setFilter(CANDIDATE_FILTER_ORDER[nextIndex]);
+      tabButtonRefs.current[nextIndex]?.focus();
     }
   };
 
@@ -832,38 +989,49 @@ export function ExtractionWorkspace() {
                       ['ambiguous', 'Ambiguous'],
                       ['possible-new-form', 'Possible new'],
                     ] as const
-                  ).map(([value, label]) => (
+                  ).map(([value, label], index) => (
                     <button
                       key={value}
+                      ref={(el) => {
+                        tabButtonRefs.current[index] = el;
+                      }}
                       type="button"
                       role="tab"
                       aria-selected={filter === value}
+                      tabIndex={filter === value ? 0 : -1}
                       className="tab-btn"
                       onClick={() => setFilter(value)}
+                      onKeyDown={(event) => handleFilterTabKeyDown(event, index)}
                     >
                       {label}
                     </button>
                   ))}
                 </div>
 
-                <CandidateTable
-                  occurrences={visibleOccurrences}
-                  snapshot={snapshot}
-                  selectedOccurrenceId={selectedOccurrenceId}
-                  rejectedIds={rejectedIds}
-                  sessionResolvedMap={sessionResolvedMap}
-                  staleWarning={runIsStale}
-                  evidenceBySpan={run.evidenceBySpan}
-                  packSuggestionsBySpan={run.packSuggestionsBySpan}
-                  rankMode={rankMode}
-                  groupedView={groupedView}
-                  rankedGroups={rankedGroups}
-                  onSelectOccurrence={(id) => setSelectedOccurrenceId(id)}
-                  onCreateConcept={(occ) => void handleCreateConceptFromOcc(occ)}
-                  onLinkToConcept={(occ, cid) => void handleLinkToConcept(occ, cid)}
-                  onResolveAmbiguous={handleResolveAmbiguous}
-                  onRejectSession={handleRejectSession}
-                />
+                {rankingError ? (
+                  <div className="banner banner-error" role="alert">
+                    <strong>Ranking bound exceeded:</strong> {rankingError}
+                  </div>
+                ) : (
+                  <CandidateTable
+                    occurrences={visibleOccurrences}
+                    snapshot={snapshot}
+                    selectedOccurrenceId={selectedOccurrenceId}
+                    rejectedIds={rejectedIds}
+                    sessionResolvedMap={sessionResolvedMap}
+                    staleWarning={runIsStale}
+                    evidenceBySpan={run.evidenceBySpan}
+                    packSuggestionsBySpan={run.packSuggestionsBySpan}
+                    rankMode={rankMode}
+                    groupedView={groupedView}
+                    rankedGroups={rankedGroups}
+                    onSelectOccurrence={(id) => setSelectedOccurrenceId(id)}
+                    onCreateConcept={(occ) => void handleCreateConceptFromOcc(occ)}
+                    onLinkToConcept={(occ, cid) => void handleLinkToConcept(occ, cid)}
+                    onResolveAmbiguous={handleResolveAmbiguous}
+                    onRejectSession={handleRejectSession}
+                  />
+                )}
               </section>
             </div>
 
@@ -992,6 +1160,7 @@ export function ExtractionWorkspace() {
         busy={applying}
         onApprove={() => void handleApproveAndSave()}
         onCancel={() => {
+          proposalSeqRef.current += 1;
           setPendingProposal(null);
           setPendingRetainMeta(null);
         }}

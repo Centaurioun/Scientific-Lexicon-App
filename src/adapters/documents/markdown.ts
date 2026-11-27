@@ -15,38 +15,42 @@ interface LineSlice {
 
 function splitLinesWithOffsets(text: string): LineSlice[] {
   const lines: LineSlice[] = [];
-  let pos = 0;
-  while (pos < text.length) {
-    const lf = text.indexOf('\n', pos);
-    if (lf === -1) {
-      const end = text.endsWith('\r') ? text.length - 1 : text.length;
-      lines.push({
-        start: pos,
-        end,
-        rawEnd: text.length,
-        content: text.slice(pos, end),
-      });
-      break;
-    }
-    const hasCr = lf > pos && text.charCodeAt(lf - 1) === 0x0d;
-    const end = hasCr ? lf - 1 : lf;
-    lines.push({
-      start: pos,
-      end,
-      rawEnd: lf + 1,
-      content: text.slice(pos, end),
-    });
-    pos = lf + 1;
+  const lineBreak = /\r\n|\r|\n/g;
+  let start = 0;
+  let match = lineBreak.exec(text);
+  while (match) {
+    const end = match.index;
+    lines.push({ start, end, rawEnd: lineBreak.lastIndex, content: text.slice(start, end) });
+    start = lineBreak.lastIndex;
+    match = lineBreak.exec(text);
+  }
+  if (start < text.length) {
+    lines.push({ start, end: text.length, rawEnd: text.length, content: text.slice(start) });
   }
   return lines;
 }
 
 const HEADING_RE = /^(\s{0,3})(#{1,6})(?:[ \t]+|$)(.*)$/;
 const FENCE_OPEN_RE = /^(\s{0,3})(`{3,}|~{3,})(.*)$/;
+const FENCE_CLOSE_RE = /^\s{0,3}(`{3,}|~{3,})[ \t]*$/;
 const LIST_ITEM_RE = /^\s{0,3}(?:[-*+]|\d{1,9}[.)])\s+/;
 const TABLE_SEP_RE = /^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$/;
 const REF_LINK_DEF_RE = /^\s{0,3}\[[^\]]+\]:\s+\S+/;
 const RAW_HTML_TAG_RE = /<\/?[A-Za-z][A-Za-z0-9-]*(?:\s+[^<>]*)?\/?>/;
+
+function matchOpeningFence(line: string): { fenceChar: string; fenceLen: number; info: string } | null {
+  const m = FENCE_OPEN_RE.exec(line);
+  if (!m) return null;
+  const fenceChar = m[2][0];
+  const fenceLen = m[2].length;
+  const info = m[3];
+  // CommonMark §4.5: backtick code fence info strings cannot contain backtick characters.
+  // This prevents single-line multi-backtick inline code (e.g. ```code```) from opening a fence.
+  if (fenceChar === '`' && info.includes('`')) {
+    return null;
+  }
+  return { fenceChar, fenceLen, info: info.trim() };
+}
 
 function hasUnescapedPipe(line: string): boolean {
   for (let i = 0; i < line.length; i += 1) {
@@ -167,6 +171,9 @@ function scanInlineExclusions(
         j += 1;
       }
       if (closed) continue;
+      warnings.add(
+        'Malformed or unclosed inline link destination detected; analyzed conservatively as literal text.',
+      );
     }
 
     i += 1;
@@ -201,19 +208,18 @@ export function parseMarkdownDocument(text: string): ParsedDocument {
     }
 
     // 1. Fenced code block (``` or ~~~)
-    const fenceMatch = FENCE_OPEN_RE.exec(line.content);
-    if (fenceMatch) {
-      const fenceChar = fenceMatch[2][0];
-      const fenceLen = fenceMatch[2].length;
+    const fence = matchOpeningFence(line.content);
+    if (fence) {
+      const { fenceChar, fenceLen, info } = fence;
       const fenceStart = line.start;
-      const info = fenceMatch[3].trim();
       let j = i + 1;
       let closed = false;
       while (j < lines.length) {
-        const closeLine = lines[j].content.trim();
+        const closeMatch = FENCE_CLOSE_RE.exec(lines[j].content);
         if (
-          closeLine.length >= fenceLen &&
-          [...closeLine].every((c) => c === fenceChar)
+          closeMatch &&
+          closeMatch[1][0] === fenceChar &&
+          closeMatch[1].length >= fenceLen
         ) {
           closed = true;
           break;
@@ -332,7 +338,7 @@ export function parseMarkdownDocument(text: string): ParsedDocument {
       const next = lines[j];
       if (
         next.content.trim().length === 0 ||
-        FENCE_OPEN_RE.test(next.content) ||
+        matchOpeningFence(next.content) !== null ||
         HEADING_RE.test(next.content) ||
         LIST_ITEM_RE.test(next.content) ||
         REF_LINK_DEF_RE.test(next.content) ||

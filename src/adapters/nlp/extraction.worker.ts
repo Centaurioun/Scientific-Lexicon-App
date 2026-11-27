@@ -10,7 +10,11 @@ interface WorkerRequestMessage {
 }
 
 self.addEventListener('message', (event: MessageEvent<WorkerRequestMessage>) => {
-  const { id, text } = event.data;
+  const payload = event.data;
+  if (!payload || typeof payload.id !== 'number' || typeof payload.text !== 'string') {
+    return;
+  }
+  const { id, text } = payload;
   engine
     .analyze(text)
     .then((tokens) => {

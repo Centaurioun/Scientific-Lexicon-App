@@ -24,7 +24,11 @@ import {
   parseProcessingLimits,
   type ProcessingLimits,
 } from '@/domain/processing-limits';
-import { isSpanEligibleInDocument, type ParsedDocument } from '@/domain/document-input';
+import {
+  isSpanEligibleInDocument,
+  validateParsedDocument,
+  type ParsedDocument,
+} from '@/domain/document-input';
 import type {
   AcronymExpansionHypothesis,
   CandidateEvidence,
@@ -222,6 +226,15 @@ export async function analyzeText(
   options: AnalyzeTextOptions = {},
 ): Promise<ExtractionRun> {
   throwIfAborted(options.signal);
+  if (options.parsedDocument) {
+    const parsed = validateParsedDocument(options.parsedDocument);
+    if (parsed.text !== text) {
+      throw new RangeError('ParsedDocument.text must exactly match the text being analyzed.');
+    }
+    if (parsed.format === 'docx') {
+      throw new RangeError('DOCX documents cannot be analyzed until a parser passes G1 qualification.');
+    }
+  }
   const limits = parseProcessingLimits(options.limits ?? DEFAULT_PROCESSING_LIMITS);
   validateInputText(text, limits);
   const occurrenceTracker = new OccurrenceLimitTracker(limits.maxCandidateOccurrences);
@@ -260,7 +273,7 @@ export async function analyzeText(
   throwIfAborted(options.signal);
 
   const nlpStart = performance.now();
-  const tokens = await nlp.analyze(text);
+  const tokens = await nlp.analyze(text, options.signal);
   const nlpMs = performance.now() - nlpStart;
   throwIfAborted(options.signal);
 
@@ -315,7 +328,9 @@ export async function analyzeText(
   if (options.dictionaryPack) {
     const suggestions = await lookupDictionaryPack(text, options.dictionaryPack, {
       parsedDocument: options.parsedDocument,
-      occurrenceTracker: options.useDictionaryPackAsDiscoveryHints ? occurrenceTracker : undefined,
+      // Suggestions also consume memory and occurrence capacity, even when they do not
+      // participate in unknown-candidate discovery.
+      occurrenceTracker,
       signal: options.signal,
     });
     throwIfAborted(options.signal);
@@ -383,6 +398,7 @@ export async function analyzeText(
     algorithmVersion,
     libraryRevision: snapshot.libraryRevision,
     occurrences,
+    tokens,
     ...(evidenceBySpan ? { evidenceBySpan } : {}),
     ...(hypotheses ? { hypotheses } : {}),
     ...(options.parsedDocument ? { parsedDocument: options.parsedDocument } : {}),

@@ -36,3 +36,60 @@
 ## Live Browser Verification Notes (D12)
 - **Round 1** caught route path mismatch in newly authored E2E specs (`/extract` -> `/extraction`, `#expr-text-input` -> `#editor-text-input`, `Preview change`, `Download complete backup (.json)` / `#backup-file-input` / `Confirm atomic restore`), and spotted minor tag spacing + toolbar baseline alignment in `/library`.
 - **Round 2** verified polished `/library` focused concept banner + baseline-aligned toolbar, verified `/extraction` split-view C-value grouping + parser warnings + excluded Markdown ranges + `0` console errors + `0` external network requests, and fixed grouped-card inner table button wrapping so `Create concept` and `Reject` fit cleanly at `1440x900`.
+
+---
+
+## Independent Codex Qualification Addendum (2026-11-27)
+
+Environment: macOS ARM64, Node `v26.12.1`, npm `11.20.0`, Playwright `1.65.1`; branch `codex/wp02-independent-qualification`; source base `2e4a5894e92f3439330aa019d337ac04a08b794f`. Required lock SHA matched before and after remediation. `npm ci` installed the existing lock graph (69 packages added; 0 npm audit advisories); no package or lockfile edit was made.
+
+| Task | Independent status | Evidence / remaining scope |
+|---|---|---|
+| D1 | PASS for reproduction | Pinned WP01/WP02 ancestry verified; original 80 unit tests, dependency gate, typecheck, build, and Playwright rerun. First native browser suite exposed one integrated restore test timing failure. |
+| D2 | PARTIAL | Fixed mixed CRLF/CR/LF splitting; reject out-of-order exclusion metadata and mismatched `ParsedDocument.text`. Exact UTF-16/cross-section/markup adversarial matrix is incomplete. |
+| D3 | BLOCKED | Existing candidate dossier reused; no parser dependency added or enabled. No isolated hostile-archive G1 artifact produced. |
+| D4 | PARTIAL | S1 remains default and baseline tests pass. Full independent adversarial grammar challenge and limit-plus-one/error-path matrix not completed. |
+| D5 | PARTIAL / REMEDIATED FINDINGS | Explicit NLP tokens now drive ranking, view filtering no longer changes corpus scores, subsequence index removes all-pairs type comparison and deduplicates repeated windows per distinct container, and group keys are tuple encoded. Independent pairwise oracle and 5k/10k repeated/diverse timings added. Review RED/GREEN reproduced and fixed a duplicate-container score error. |
+| D6 | PARTIAL / REMEDIATED FINDINGS | Pre-read 2 MiB check, fatal UTF-8 decoding, required URI, shared tracker in both pack modes, and shared per-surface entries. Schema-valid arbitrary packs remain importable; synthetic-only enforcement is unresolved. |
+| D7 | PARTIAL | Browser UI 5k/10k runs and cancellation test passed; complete browser-local stage measurements, high type diversity, pack stress, worker failure/cancellation matrix, and memory/responsiveness audit remain incomplete. |
+| D8 | PARTIAL | File reads, proposals, cancellation status, and revision changes now guard stale completions; out-of-order file completion tested. Independent review found revision invalidation could strand `analyzing`; it now aborts and clears loading state. Pack-clear race, proposal delayed-promise matrix, accessibility, and homonym workflows need broader coverage. |
+| D9 | PASS within existing tests | Literal and case-insensitive lookup E2E passed; no new changes to lookup semantics. |
+| D10 | PARTIAL | Existing unit suite passed; complete independent metric, duplicate, at-k, concept mapping, false-rejection, and leakage audit not completed. |
+| D11 | PASS for bounded synthetic factorial | Replaced confounded evaluation with S1/S2 × source-order/frequency/C-value, identical inputs and warmed NLP. No generalization claim. |
+| D12 | NOT QUALIFIED | Final dependency gate 4/4, unit tests 91/91, typecheck, production build, and Playwright 25/25 pass. Q2/Q4/Q5/Q6/Q7/Q8 mandatory evidence gaps remain. See independent qualification report. |
+
+The Gemini D1–D12 completion entries above are historical claims and are not upgraded to independent PASS by this addendum.
+
+
+### Independent Qualification Follow-up (2026-11-27)
+
+The independent remediation branch extends the original ledger evidence; the original Google AI Studio entries above remain historical. Final native verification on the remediation tree passed: dependency gate 4/4, unit 91/91 across 22 files, typecheck, production build, Playwright 25/25, and npm audit with zero vulnerabilities.
+
+| Requirement | Independent status | Added evidence / remaining limits |
+|---|---|---|
+| D2 | PARTIAL | Added exact UTF-16 slices for combining marks and supplementary-plane characters with CRLF; full malformed Markdown/fuzz matrix remains incomplete. |
+| D6 | PARTIAL | Added 100-ID repeated-surface / 2,000-hit stress fixture and browser test clearing a pack during delayed upload. Arbitrary schema-valid packs remain importable; synthetic-only enforcement and rights verification remain unresolved. |
+| D8 | PARTIAL | Delayed pack upload invalidation now has browser coverage; delayed proposal and full policy/revision interleavings, accessibility and homonym workflows remain incomplete. |
+| D10 | PASS for synthetic harness semantics | Fail-closed UTF-16 span, annotation consistency, document correspondence, K and elapsed-time validation. This does not establish G5 or gold annotation validity. |
+| D12 | NOT QUALIFIED | Gate 4/4, unit 91/91, typecheck/build pass, Playwright 25/25; Q2/Q4/Q5/Q6/Q8/Q9 mandatory gaps remain. See `docs/evaluation/WP02-INDEPENDENT-QUALIFICATION.md`. |
+
+---
+
+## AI Studio Qualification Closure Addendum (`QC01–QC09`, 2026-11-27)
+
+All historical entries above are preserved intact. Pinned Codex transfer `a935c186f27e829d42f5370b3840391e8fe64ed4` was verified and applied (21 files written; `next-env.d.ts` already matched `targetBlob`; `docs/handoffs/wp02-codex-transfer/` preserved intact). Closure packages `QC01`–`QC09` were executed with RED/GREEN TDD and live headless Chromium verification (`playwright-cli`).
+
+| Package | Status | Key Artifacts & Verified Evidence |
+| --- | --- | --- |
+| **QC01** | `CLOSED—VERIFIED` | `src/domain/synthetic-dictionary-manifest.ts` (`wp02-synthetic-allowlist-v1` SHA-256 allowlist), `src/application/dictionary-pack-file.ts`, `RankingControls.tsx`; `dictionary-pack.test.ts` (8/8 PASS) + Chromium UI rejection/activation verified. |
+| **QC02** | `CLOSED—VERIFIED` | `src/application/ranking.ts` (arbitrary-length targeted index, exact NLP token coverage fallback, `MAX_CVALUE_INDEX_PROBES`, skip index outside `c-value`), `CandidateTable.tsx` (shared `#candidate-link-target-select`), `SourceContext.tsx` (`O(N)` sweep + `React.memo`); `ranking.test.ts` (12/12 PASS). |
+| **QC03** | `CLOSED—VERIFIED` | `src/adapters/nlp/wink-engine.ts`, `wink-core.ts`, `extraction.worker.ts`, `domain/extraction.ts`, `application/extraction.ts`, `registered-matcher.ts`; `s2-cancellation.test.ts` (8/8 PASS). |
+| **QC04** | `CLOSED—VERIFIED` | `src/adapters/documents/markdown.ts` (CommonMark §4.5 backtick info-string + `<=3`-space fence close + unclosed link warning), `src/application/scientific-candidates.ts` (intra-word cursor + final-word anchor); `s2-challenge.test.ts` (6/6 PASS, incl. 60-doc fuzz). |
+| **QC05** | `CLOSED—VERIFIED` | `src/features/extraction/concurrency-controller.ts`, `ExtractionWorkspace.tsx`, `ChangeApprovalDialog.tsx`, `tests/e2e/s2-async-races.spec.ts`; `ui-concurrency.test.ts` (4/4 PASS) + Chromium keyboard/focus verification. |
+| **QC06** | `CLOSED—VERIFIED` | Real headless Chromium measurements (cold/warm, 5k/10k 2 trials, 5001/10001 reject, 4k high-distinct-type, dense pack hints + long forms, 115.2k cancel/restart RAF max `50 ms`) + Node stage breakdown (`50` & `250` concepts). |
+| **QC07** | `CLOSED—VERIFIED` | End-to-end Chromium sentinel audit (`SYNTH_SRC_SENTINEL_9C2E`, `SYNTH_PACK_SENTINEL_7F3A`, `SYNTH_CODE_EXCLUDED_4B1D`, `SYNTH_RETAIN_SENTINEL_3D8B`): zero leaks, exact empty-context backup restore equivalence, clean retention/delete/clear, `0` console errors, `0` external requests. |
+| **QC08** | `BLOCKED—CONDITIONAL/EXCLUDED` | Zero DOCX packages/code/selectors confirmed; Section 5 QC08 closure confirmation appended to `docs/qualification/WP02-DOCX-CANDIDATE.md`. |
+| **QC09** | `IMPLEMENTED—VERIFICATION BLOCKED (environment)` | `npm run typecheck` PASS, `npm run test` (24 files / 109 tests PASS), production build PASS, 6-way factorial comparison unchanged (`s2-comparison.test.ts` 1/1 PASS); native `npm run test:gate` & `npm run test:e2e` blocked by AI Studio container. Closure report: `docs/evaluation/WP02-AI-STUDIO-CLOSURE.md`. |
+
+- **Current Verdict:** **`IMPLEMENTED — INDEPENDENT QUALIFICATION PENDING`** (AI Studio self-review; D3 `BLOCKED`; G4 `NOT READY`; G5 `NOT ESTABLISHED`; WP03 untouched; owner syncs GitHub manually).
+

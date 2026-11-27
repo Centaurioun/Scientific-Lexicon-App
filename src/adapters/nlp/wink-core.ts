@@ -206,17 +206,26 @@ function shouldSplitAfterSentencePunct(
 }
 
 export class WinkNlpEngine implements NlpEngine {
-  async analyze(text: string): Promise<Token[]> {
+  async analyze(text: string, signal?: AbortSignal): Promise<Token[]> {
+    if (signal?.aborted) {
+      throw new DOMException('Analysis aborted', 'AbortError');
+    }
     if (text.trim().length === 0) {
       return [];
     }
 
     const nlp = getWinkInstance();
     const doc = nlp.readDoc(text);
+    if (signal?.aborted) {
+      throw new DOMException('Analysis aborted', 'AbortError');
+    }
     const rawTokens: RawWinkToken[] = [];
 
     let sentenceIndex = 0;
     doc.sentences().each((sentence: ItemSentence) => {
+      if (signal?.aborted) {
+        throw new DOMException('Analysis aborted', 'AbortError');
+      }
       const sentenceTokens = sentence.tokens();
       const values = sentenceTokens.out(nlp.its.value);
       const posTags = sentenceTokens.out(nlp.its.pos);
@@ -241,6 +250,10 @@ export class WinkNlpEngine implements NlpEngine {
       }
       sentenceIndex += 1;
     });
+
+    if (signal?.aborted) {
+      throw new DOMException('Analysis aborted', 'AbortError');
+    }
 
     return reconstructTokenSpans(text, rawTokens);
   }

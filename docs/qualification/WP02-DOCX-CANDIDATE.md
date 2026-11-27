@@ -52,3 +52,13 @@ To unblock D3 in a subsequent local Codex pass:
 2. Verify Next.js 16 Turbopack browser production build with zero Node-only polyfill leaks and zero external network calls.
 3. Run synthetic round-trip + hostile fixture tests (valid paragraphs/headings/tables, zip bomb, >limit entry count, malformed ZIP, encrypted archive, `<!DOCTYPE>`/`<!ENTITY>` XXE payload, external relationship link, macro attachment, omission warnings, `AbortSignal` cancellation).
 4. Present exact G1 qualification evidence to the owner for explicit approval before enabling `.docx` in `ExtractionWorkspace.tsx`.
+
+---
+
+## 5. QC08 Closure Audit Confirmation (2026-11-27)
+
+- Verified `package.json` contains zero DOCX/ZIP/XML runtime packages (`mammoth`, `jszip`, `fflate`, etc. absent; exact 15 WP01 direct dependencies preserved).
+- Verified `src/` contains zero DOCX parsing implementation, zero `.docx` file-picker accept rule, and zero selectable DOCX UI mode (`Exclude<DocumentFormat, 'docx'>` enforced in `ExtractionWorkspace.tsx` and `RankingControls.tsx`; `readDocument()` and `analyzeText()` fail closed on `.docx` / `format === 'docx'`).
+- Verified every required G1 prerequisite for future independent Codex qualification is explicitly enumerated above: exact candidate pins, canonical `package-lock.json` SRI, transitive license/notice/vulnerability (`npm audit`) review, Next.js browser bundle check, bounded decompression (malformed, encrypted, macro-enabled, archive amplification/zip-bomb), XML entity and external relationship rejection, cooperative `AbortSignal` cancellation, and immutable extracted UTF-16 coordinate + omission-warning semantics.
+- **QC08 / D3 Status:** `BLOCKED—CONDITIONAL/EXCLUDED` (no bypass, no partial DOCX code).
+

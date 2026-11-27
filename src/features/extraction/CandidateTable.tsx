@@ -1,14 +1,17 @@
 'use client';
 
 import Link from 'next/link';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   formatCandidateReason,
   type CandidateEvidence,
 } from '@/domain/candidate-evidence';
 import type { DictionaryPackSuggestion } from '@/domain/dictionary-pack';
 import type { RankedCandidate, RankMode } from '@/domain/ranking';
-import type { Concept, Expression, LibrarySnapshot, Occurrence } from '@/domain/schema';
+import type { LibrarySnapshot, Occurrence } from '@/domain/schema';
+
+const MAX_DISPLAY_PACK_ENTRIES = 5;
+const MAX_DISPLAY_NESTED_CONTAINERS = 6;
 
 interface CandidateTableProps {
   occurrences: readonly Occurrence[];
@@ -29,12 +32,6 @@ interface CandidateTableProps {
   onRejectSession: (occ: Occurrence) => void;
 }
 
-function conceptLabel(concept: Concept, expressions: readonly Expression[]): string {
-  const forms = expressions.filter((e) => e.conceptId === concept.id);
-  const preferred = forms.find((f) => f.role === 'preferred') ?? forms[0];
-  return preferred ? `${preferred.text} (${concept.id.slice(0, 8)})` : concept.id.slice(0, 8);
-}
-
 function stateBadgeClass(state: Occurrence['state']): string {
   switch (state) {
     case 'known-form':
@@ -45,6 +42,24 @@ function stateBadgeClass(state: Occurrence['state']): string {
     case 'ambiguous':
       return 'tag tag-amber';
   }
+}
+
+function formatBoundedEntryIds(sug: DictionaryPackSuggestion): string {
+  const total = sug.entries.length;
+  const head = sug.entries
+    .slice(0, MAX_DISPLAY_PACK_ENTRIES)
+    .map((e) => e.externalId ?? e.id)
+    .join(', ');
+  if (total <= MAX_DISPLAY_PACK_ENTRIES) return head;
+  return `${head} (+${(total - MAX_DISPLAY_PACK_ENTRIES).toLocaleString('en-US')} more of ${total.toLocaleString('en-US')})`;
+}
+
+function formatBoundedNestedSurfaces(surfaces: readonly string[]): string {
+  if (surfaces.length <= MAX_DISPLAY_NESTED_CONTAINERS) {
+    return surfaces.join(', ');
+  }
+  const head = surfaces.slice(0, MAX_DISPLAY_NESTED_CONTAINERS).join(', ');
+  return `${head} (+${surfaces.length - MAX_DISPLAY_NESTED_CONTAINERS} more)`;
 }
 
 export function CandidateTable({
@@ -65,8 +80,67 @@ export function CandidateTable({
   onResolveAmbiguous,
   onRejectSession,
 }: CandidateTableProps) {
-  const [linkTargetByOcc, setLinkTargetByOcc] = useState<Record<string, string>>({});
+  const [selectedLinkConceptId, setSelectedLinkConceptId] = useState<string>('');
   const [resolveTargetByOcc, setResolveTargetByOcc] = useState<Record<string, string>>({});
+
+  // Precompute concept display labels in O(concepts + expressions) instead of per-row O(C * E).
+  const conceptLabelById = useMemo(() => {
+    const preferredByConcept = new Map<string, string>();
+    const fallbackByConcept = new Map<string, string>();
+    for (const expr of snapshot.expressions) {
+      if (!fallbackByConcept.has(expr.conceptId)) {
+        fallbackByConcept.set(expr.conceptId, expr.text);
+      }
+      if (expr.role === 'preferred' && !preferredByConcept.has(expr.conceptId)) {
+        preferredByConcept.set(expr.conceptId, expr.text);
+      }
+    }
+    const labels = new Map<string, string>();
+    for (const concept of snapshot.concepts) {
+      const labelText = preferredByConcept.get(concept.id) ?? fallbackByConcept.get(concept.id);
+      labels.set(
+        concept.id,
+        labelText ? `${labelText} (${concept.id.slice(0, 8)})` : concept.id.slice(0, 8),
+      );
+    }
+    return labels;
+  }, [snapshot.concepts, snapshot.expressions]);
+
+  const effectiveLinkConceptId = useMemo(() => {
+    if (selectedLinkConceptId && conceptLabelById.has(selectedLinkConceptId)) {
+      return selectedLinkConceptId;
+    }
+    return snapshot.concepts[0]?.id ?? '';
+  }, [selectedLinkConceptId, conceptLabelById, snapshot.concepts]);
+
+  const rankByOccId = useMemo(() => {
+    const map = new Map<string, RankedCandidate>();
+    for (const item of rankedGroups) {
+      for (const occId of item.group.occurrenceIds) {
+        map.set(occId, item);
+      }
+    }
+    return map;
+  }, [rankedGroups]);
+
+  const occById = useMemo(() => {
+    const map = new Map<string, Occurrence>();
+    for (const occ of occurrences) {
+      map.set(occ.id, occ);
+    }
+    return map;
+  }, [occurrences]);
+
+  const orderedOccurrences = useMemo<Occurrence[]>(() => {
+    if (rankMode === 'source-order' || rankedGroups.length === 0) {
+      return [...occurrences];
+    }
+    return rankedGroups.flatMap((item) =>
+      item.group.occurrenceIds
+        .map((id) => occById.get(id))
+        .filter((o): o is Occurrence => Boolean(o)),
+    );
+  }, [occurrences, rankMode, rankedGroups, occById]);
 
   if (occurrences.length === 0) {
     return (
@@ -77,18 +151,9 @@ export function CandidateTable({
     );
   }
 
-  // Build quick lookup from occurrenceId to its RankedCandidate (for displaying raw ranking features)
-  const rankByOccId = new Map<string, RankedCandidate>();
-  for (const item of rankedGroups) {
-    for (const occId of item.group.occurrenceIds) {
-      rankByOccId.set(occId, item);
-    }
-  }
-
-  const occById = new Map<string, Occurrence>();
-  for (const occ of occurrences) {
-    occById.set(occ.id, occ);
-  }
+  const effectiveLinkConceptLabel = effectiveLinkConceptId
+    ? conceptLabelById.get(effectiveLinkConceptId) ?? effectiveLinkConceptId.slice(0, 8)
+    : '';
 
   const renderOccurrenceRow = (occ: Occurrence) => {
     const isSelected = occ.id === selectedOccurrenceId;
@@ -100,7 +165,6 @@ export function CandidateTable({
     const packSuggestions = packSuggestionsBySpan?.get(spanKey) ?? [];
     const rankInfo = rankByOccId.get(occ.id);
 
-    const defaultLinkConcept = linkTargetByOcc[occ.id] ?? snapshot.concepts[0]?.id ?? '';
     const defaultResolveConcept = resolveTargetByOcc[occ.id] ?? occ.conceptIds[0] ?? '';
 
     return (
@@ -200,9 +264,7 @@ export function CandidateTable({
                     Pack hint (unverified)
                   </span>{' '}
                   <strong>{sug.packName}</strong> ({sug.authority}, {sug.release}, {sug.license}) ·{' '}
-                  <span className="mono">
-                    {sug.entries.map((e) => e.externalId ?? e.id).join(', ')}
-                  </span>
+                  <span className="mono">{formatBoundedEntryIds(sug)}</span>
                 </div>
               ))}
             </div>
@@ -228,38 +290,19 @@ export function CandidateTable({
               >
                 {isRejected ? 'Undo reject' : 'Reject'}
               </button>
-            </div>
 
-            {snapshot.concepts.length > 0 && (
-              <div className="row-inline">
-                <select
-                  aria-label={`Target concept to link ${occ.surface}`}
-                  className="select"
-                  style={{ width: 'auto', minWidth: '10rem', padding: '0.26rem 0.45rem', fontSize: '0.78rem' }}
-                  value={defaultLinkConcept}
-                  onChange={(event) =>
-                    setLinkTargetByOcc((prev) => ({
-                      ...prev,
-                      [occ.id]: event.target.value,
-                    }))
-                  }
-                >
-                  {snapshot.concepts.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {conceptLabel(c, snapshot.expressions)}
-                    </option>
-                  ))}
-                </select>
+              {snapshot.concepts.length > 0 && (
                 <button
                   type="button"
                   className="btn btn-sm btn-subtle"
-                  disabled={staleWarning || !defaultLinkConcept}
-                  onClick={() => onLinkToConcept(occ, defaultLinkConcept)}
+                  disabled={staleWarning || !effectiveLinkConceptId}
+                  title={`Link "${occ.surface}" to ${effectiveLinkConceptLabel}`}
+                  onClick={() => onLinkToConcept(occ, effectiveLinkConceptId)}
                 >
                   Link form
                 </button>
-              </div>
-            )}
+              )}
+            </div>
 
             {occ.state === 'ambiguous' && occ.conceptIds.length > 1 && (
               <div className="row-inline">
@@ -275,14 +318,11 @@ export function CandidateTable({
                     }))
                   }
                 >
-                  {occ.conceptIds.map((cid) => {
-                    const concept = snapshot.concepts.find((c) => c.id === cid);
-                    return (
-                      <option key={cid} value={cid}>
-                        {concept ? conceptLabel(concept, snapshot.expressions) : cid}
-                      </option>
-                    );
-                  })}
+                  {occ.conceptIds.map((cid) => (
+                    <option key={cid} value={cid}>
+                      {conceptLabelById.get(cid) ?? cid}
+                    </option>
+                  ))}
                 </select>
                 <button
                   type="button"
@@ -300,9 +340,43 @@ export function CandidateTable({
     );
   };
 
+  const sharedLinkTargetBar =
+    snapshot.concepts.length > 0 ? (
+      <div
+        className="row-inline"
+        style={{
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '0.5rem',
+          padding: '0.5rem 0.75rem',
+          background: 'var(--paper)',
+          border: '1px solid var(--line)',
+          borderRadius: '0.5rem',
+        }}
+      >
+        <label htmlFor="candidate-link-target-select" className="small" style={{ fontWeight: 600 }}>
+          Target concept for &ldquo;Link form&rdquo; actions:
+        </label>
+        <select
+          id="candidate-link-target-select"
+          className="select"
+          style={{ width: 'auto', minWidth: '14rem', padding: '0.3rem 0.5rem', fontSize: '0.82rem' }}
+          value={effectiveLinkConceptId}
+          onChange={(event) => setSelectedLinkConceptId(event.target.value)}
+        >
+          {snapshot.concepts.map((c) => (
+            <option key={c.id} value={c.id}>
+              {conceptLabelById.get(c.id) ?? c.id.slice(0, 8)}
+            </option>
+          ))}
+        </select>
+      </div>
+    ) : null;
+
   if (groupedView && rankedGroups.length > 0) {
     return (
       <div className="stack-md" data-testid="grouped-candidate-list">
+        {sharedLinkTargetBar}
         {rankedGroups.map((item) => {
           const groupOccurrences = item.group.occurrenceIds
             .map((id) => occById.get(id))
@@ -334,7 +408,7 @@ export function CandidateTable({
                   <div className="small muted mono">
                     {item.features.formulaDescription}: {item.features.formulaDetails}
                     {item.features.nestedContainerSurfaces.length > 0
-                      ? ` · nested in: ${item.features.nestedContainerSurfaces.join(', ')}`
+                      ? ` · nested in: ${formatBoundedNestedSurfaces(item.features.nestedContainerSurfaces)}`
                       : ''}
                   </div>
                 </div>
@@ -360,29 +434,22 @@ export function CandidateTable({
     );
   }
 
-  // Flat per-occurrence table (reordered by rankMode if active, preserving every occurrence row)
-  const orderedOccurrences: Occurrence[] =
-    rankMode === 'source-order' || rankedGroups.length === 0
-      ? [...occurrences]
-      : rankedGroups.flatMap((item) =>
-          item.group.occurrenceIds
-            .map((id) => occById.get(id))
-            .filter((o): o is Occurrence => Boolean(o)),
-        );
-
   return (
-    <div className="table-wrap">
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th>Surface &amp; Span</th>
-            <th>State</th>
-            <th>Associations</th>
-            <th>Explicit Review Actions</th>
-          </tr>
-        </thead>
-        <tbody>{orderedOccurrences.map(renderOccurrenceRow)}</tbody>
-      </table>
+    <div className="stack-sm">
+      {sharedLinkTargetBar}
+      <div className="table-wrap">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>Surface &amp; Span</th>
+              <th>State</th>
+              <th>Associations</th>
+              <th>Explicit Review Actions</th>
+            </tr>
+          </thead>
+          <tbody>{orderedOccurrences.map(renderOccurrenceRow)}</tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 'use client';
 
+import { memo, useMemo } from 'react';
 import {
   formatCandidateReason,
   type CandidateEvidence,
@@ -25,8 +26,9 @@ interface TextSegment {
 }
 
 /**
- * Segments source text into non-overlapping clickable display slices while prioritizing
- * the currently selected occurrence (even when nested inside a longer candidate span).
+ * Segments source text into non-overlapping clickable display slices in O(N) time
+ * while prioritizing the currently selected occurrence (even when nested inside a
+ * longer candidate span). Relies on occurrences sorted by start asc, longer span first.
  * Never mutates source text or drops any characters.
  */
 function buildDisplaySegments(
@@ -38,22 +40,36 @@ function buildDisplaySegments(
     return [{ key: 'plain-0', text, occurrence: null }];
   }
 
+  const selected = selectedId ? occurrences.find((o) => o.id === selectedId) ?? null : null;
   const chosen: Occurrence[] = [];
-  const selected = occurrences.find((o) => o.id === selectedId) ?? null;
-  if (selected) {
-    chosen.push(selected);
-  }
+  let lastEnd = -1;
+  let insertedSelected = false;
 
-  // Add non-overlapping occurrences sorted by start asc, longer span first
+  // Single O(N) sweep: occurrences are sorted by start asc, length desc.
   for (const occ of occurrences) {
-    if (selected && occ.id === selected.id) continue;
-    const overlaps = chosen.some((c) => occ.start < c.end && occ.end > c.start);
-    if (!overlaps) {
+    if (selected) {
+      if (occ.id === selected.id) continue;
+      // Skip any occurrence overlapping the prioritized selected span
+      if (occ.start < selected.end && occ.end > selected.start) continue;
+      // Insert selected span in sorted order once we pass its start
+      if (!insertedSelected && occ.start >= selected.end) {
+        chosen.push(selected);
+        insertedSelected = true;
+        if (selected.end > lastEnd) {
+          lastEnd = selected.end;
+        }
+      }
+    }
+
+    if (occ.start >= lastEnd) {
       chosen.push(occ);
+      lastEnd = occ.end;
     }
   }
 
-  chosen.sort((a, b) => a.start - b.start);
+  if (selected && !insertedSelected) {
+    chosen.push(selected);
+  }
 
   const segments: TextSegment[] = [];
   let cursor = 0;
@@ -95,7 +111,7 @@ function classForState(state: Occurrence['state'], isActive: boolean): string {
   return isActive ? `${base} occ-active` : base;
 }
 
-export function SourceContext({
+export const SourceContext = memo(function SourceContext({
   text,
   occurrences,
   selectedOccurrenceId,
@@ -104,8 +120,14 @@ export function SourceContext({
   packSuggestionsBySpan,
   onSelectOccurrence,
 }: SourceContextProps) {
-  const segments = buildDisplaySegments(text, occurrences, selectedOccurrenceId);
-  const active = occurrences.find((o) => o.id === selectedOccurrenceId) ?? null;
+  const segments = useMemo(
+    () => buildDisplaySegments(text, occurrences, selectedOccurrenceId),
+    [text, occurrences, selectedOccurrenceId],
+  );
+  const active = useMemo(
+    () => (selectedOccurrenceId ? occurrences.find((o) => o.id === selectedOccurrenceId) ?? null : null),
+    [occurrences, selectedOccurrenceId],
+  );
   const activeKey = active ? `${active.start}:${active.end}` : null;
   const activeEvidence = activeKey ? evidenceBySpan?.get(activeKey) : undefined;
   const activePackSuggestions = activeKey ? packSuggestionsBySpan?.get(activeKey) ?? [] : [];
@@ -220,4 +242,4 @@ export function SourceContext({
       )}
     </section>
   );
-}
+});

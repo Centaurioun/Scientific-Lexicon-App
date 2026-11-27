@@ -50,6 +50,8 @@
 
 ## 3. Observed Improvements, Negative Cases, and Limitations
 
+> **Historical record retained:** The paired S1/source-order vs S2/C-value results below are the original Gemini comparison. They confounded grammar and ranking and used a cold S1 run followed by a warm S2 run. The independent factorial comparison below supersedes it for controlled interpretation; the historical values remain unchanged for traceability.
+
 ### Observed Synthetic Improvements (S2 vs. S1)
 1. **Scientific Compound & Formula Recovery (+4 TP, −4 FN):** On the synthetic scientific fixture, `s2-grammar-2` recovered `periodontal ligament-derived stem cells`, `Na+/K+-ATPase`, `Gram staining`, and `loss of heterozygosity` while keeping exact UTF-16 offsets and excluding bibliographic `et al.` noise.
 2. **Explainable Session Evidence & Acronym Hypotheses:** `s2-grammar-2` emitted structured non-canonical reason tags and 2 `hypothesis-only` acronym pairs (`Tumor necrosis factor alpha (TNF-α)` and `loss of heterozygosity (LOH)`) without creating synonyms or mutating concepts.
@@ -60,3 +62,18 @@
 2. **High False-Positive Surface Volume (78 FP in S2 / 84 FP in S1):** Deterministic POS noun-phrase generation emits all nested sub-phrases (e.g., `ligament`, `stem cells`, `cells`, `cohorts`, `exposure`), yielding low raw precision (`0.2500`) on uncalibrated synthetic passages. This confirms why human review and future held-out G5 benchmarking are mandatory.
 3. **No Cold-vs-Warm Latency Parity Claim:** S1 ran first in the test process and absorbed wink-nlp model initialization (`308.90 ms`); S2 ran warm (`25.39 ms`). Both operate in tens of milliseconds warm on small fixtures and remain bounded by `OccurrenceLimitTracker` (`100`–`10,000` spans).
 4. **DOCX Blocked & Real Benchmarks Absent:** Local DOCX parsing remains `BLOCKED` pending separate G1 dependency qualification (`docs/qualification/WP02-DOCX-CANDIDATE.md`), and no external corpus (ACTER, ACL RD-TEC, MedMentions, BELB) was run.
+
+## 4. Independent Controlled Factorial Comparison
+
+The independent rerun uses the same three synthetic documents, parser settings, library snapshot, and limits for all six combinations. NLP was warmed once before the matrix. The reported per-configuration pipeline times include extraction but not the separate rank calculation; they are small-run observations and are not performance acceptance thresholds.
+
+| Grammar | Ranking | TP / FP / FN | Micro P / R / F1 | P@5 | P@10 | P@15 | New spans | Pipeline ms |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| S1 | Source order | 22 / 84 / 4 | .2075 / .8462 / .3333 | .2667 | .3000 | .2444 | 100 | 7.78 |
+| S1 | Frequency | 22 / 84 / 4 | .2075 / .8462 / .3333 | .4667 | .3667 | .2889 | 100 | .92 |
+| S1 | C-value | 22 / 84 / 4 | .2075 / .8462 / .3333 | .6000 | .4667 | .3111 | 100 | .77 |
+| S2 | Source order | 26 / 78 / 0 | .2500 / 1.0000 / .4000 | .2667 | .3000 | .2667 | 98 | 5.97 |
+| S2 | Frequency | 26 / 78 / 0 | .2500 / 1.0000 / .4000 | .3333 | .4000 | .3556 | 98 | .91 |
+| S2 | C-value | 26 / 78 / 0 | .2500 / 1.0000 / .4000 | .6000 | .5000 | .3778 | 98 | .78 |
+
+Span-level TP/FP/FN and full-set precision/recall do not depend on ranking. At-k values do. For this synthetic fixture only, C-value improves the selected at-k values relative to source order; this is not evidence of general scientific quality. The full metric JSON is emitted by `npx vitest run tests/unit/s2-comparison.test.ts --reporter=verbose --silent=false`.

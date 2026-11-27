@@ -110,35 +110,50 @@ function matchesAcronymInitials(acronym: string, longFormWords: readonly string[
 
   let pIdx = 0;
   let wIdx = 0;
+  let lastMatchedWordIdx = -1;
+  let lastMatchedCharIdx = -1;
+
   while (pIdx < parts.length && wIdx < wordsLower.length) {
     const part = parts[pIdx];
     const word = wordsLower[wIdx];
+
     if (part.length > 1) {
       if (word === part || word.startsWith(part)) {
+        lastMatchedWordIdx = wIdx;
+        lastMatchedCharIdx = part.length - 1;
         pIdx += 1;
         wIdx += 1;
         continue;
       }
     } else if (word.startsWith(part)) {
+      lastMatchedWordIdx = wIdx;
+      lastMatchedCharIdx = 0;
       pIdx += 1;
       wIdx += 1;
       continue;
     }
+
+    // Allow matching subsequent letters strictly after the prior cursor inside the previous matched word
+    if (lastMatchedWordIdx >= 0 && lastMatchedWordIdx === wIdx - 1) {
+      const nextPos = wordsLower[lastMatchedWordIdx].indexOf(part, lastMatchedCharIdx + 1);
+      if (nextPos !== -1) {
+        lastMatchedCharIdx = nextPos + part.length - 1;
+        pIdx += 1;
+        continue;
+      }
+    }
+
     // Allow skipping short function words like "of", "the", "and", "in", "for"
     if (SCIENTIFIC_CONNECTOR_WORDS.has(word) || word === 'the' || word === 'and') {
       wIdx += 1;
       continue;
     }
-    // Also allow matching subsequent letters inside the previous matched word (e.g., "TNF" from "Tumor necrosis factor" or "IL" from "interleukin")
-    if (wIdx > 0 && wordsLower[wIdx - 1].includes(part)) {
-      pIdx += 1;
-      continue;
-    }
+
     wIdx += 1;
   }
 
-  // Must match all acronym components and use the last word of the long form
-  return pIdx === parts.length;
+  // Must match all acronym components and anchor on the final word of the long form
+  return pIdx === parts.length && lastMatchedWordIdx === wordsLower.length - 1;
 }
 
 export interface ScientificCandidateResult {

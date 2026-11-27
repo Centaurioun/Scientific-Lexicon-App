@@ -16,11 +16,24 @@ export function ChangeApprovalDialog({
   onApprove,
   onCancel,
 }: ChangeApprovalDialogProps) {
+  const dialogRef = useRef<HTMLDivElement | null>(null);
   const approveButtonRef = useRef<HTMLButtonElement | null>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const wasOpenRef = useRef(false);
 
   useEffect(() => {
-    if (proposal) {
+    if (proposal && !wasOpenRef.current) {
+      wasOpenRef.current = true;
+      previousFocusRef.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
       approveButtonRef.current?.focus();
+    } else if (!proposal && wasOpenRef.current) {
+      wasOpenRef.current = false;
+      const target = previousFocusRef.current;
+      previousFocusRef.current = null;
+      if (target && target.isConnected) {
+        target.focus();
+      }
     }
   }, [proposal]);
 
@@ -28,7 +41,29 @@ export function ChangeApprovalDialog({
     if (!proposal) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !busy) {
+        event.preventDefault();
         onCancel();
+        return;
+      }
+      if (event.key === 'Tab' && dialogRef.current) {
+        const focusable = Array.from(
+          dialogRef.current.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          ),
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement as HTMLElement | null;
+        if (event.shiftKey) {
+          if (!active || active === first || !dialogRef.current.contains(active)) {
+            event.preventDefault();
+            last.focus();
+          }
+        } else if (!active || active === last || !dialogRef.current.contains(active)) {
+          event.preventDefault();
+          first.focus();
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -40,6 +75,7 @@ export function ChangeApprovalDialog({
   return (
     <div className="modal-backdrop">
       <div
+        ref={dialogRef}
         className="modal-panel"
         role="dialog"
         aria-modal="true"

@@ -133,4 +133,30 @@ describe('D10: Independent evaluation harness and split-leakage verification', (
     expect(leakage.overlappingDocIds).toEqual(['doc-shared']);
     expect(leakage.overlappingConceptKeys).toEqual(['C-TNF']);
   });
+
+  it('fails closed on inconsistent duplicate gold labels, invalid spans, duplicate documents, and invalid K values', () => {
+    const base: GoldDocument = {
+      id: 'doc',
+      text: 'TNF-α',
+      spans: [{ start: 0, end: 5, conceptKey: 'C1', unknown: false, nested: false }],
+    };
+    const predicted: PredictedDocument = { id: 'doc', spans: [{ start: 0, end: 5 }] };
+
+    expect(() => evaluateExtraction([base], [{ ...predicted, spans: [{ start: 0.5, end: 5 }] }]))
+      .toThrow(/safe integer/i);
+    expect(() => evaluateExtraction([base], [{ ...predicted, spans: [
+      { start: 0, end: 5, conceptKey: 'C1' }, { start: 0, end: 5, conceptKey: 'C2' },
+    ] }])).toThrow(/conflicting duplicate predicted concept/i);
+    expect(() => evaluateExtraction([
+      { ...base, spans: [...base.spans, { ...base.spans[0], unknown: true }] },
+    ], [predicted])).toThrow(/conflicting duplicate gold/i);
+    expect(() => evaluateExtraction([base, base], [predicted])).toThrow(/duplicate gold document/i);
+    expect(() => evaluateExtraction([base], [predicted, predicted])).toThrow(/duplicate predicted document/i);
+    expect(() => evaluateExtraction([base], [predicted], { kValues: [0] })).toThrow(/positive safe integer/i);
+    expect(() => evaluateExtraction([base], [predicted], { kValues: [1.5] })).toThrow(/positive safe integer/i);
+    expect(() => evaluateExtraction([base], [predicted], { kValues: [1, 1] })).toThrow(/duplicate evaluation K/i);
+    expect(() => evaluateExtraction([base], [{ ...predicted, spans: [{ start: 0, end: 6 }] }]))
+      .toThrow(/predicted span/i);
+    expect(() => evaluateExtraction([base], [{ id: 'extra', spans: [] }])).toThrow(/no matching gold/i);
+  });
 });

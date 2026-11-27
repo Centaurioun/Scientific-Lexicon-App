@@ -137,7 +137,8 @@ export function RankingControls({
         <div className="toolbar" style={{ marginBottom: 0 }}>
           <div className="field field-grow">
             <label htmlFor="dictionary-pack-input">
-              Optional local dictionary pack (.json, session-only, read-only)
+              Optional local dictionary pack (.json, approved synthetic fixtures only, session-only,
+              read-only)
             </label>
             <input
               id="dictionary-pack-input"
@@ -151,6 +152,11 @@ export function RankingControls({
                 if (file) onDictionaryPackUpload(file);
               }}
             />
+            <span className="muted small">
+              Bounded synthetic qualification policy: activation requires exact SHA-256 digest match
+              against the immutable project-owned synthetic fixture manifest (not general rights
+              clearance for external dictionaries).
+            </span>
           </div>
           {dictionaryPack && (
             <button

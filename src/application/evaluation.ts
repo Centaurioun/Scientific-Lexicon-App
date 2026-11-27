@@ -39,6 +39,29 @@ function spanKey(start: number, end: number): string {
   return `${start}:${end}`;
 }
 
+function validateEvaluationSpan(
+  span: { start: number; end: number },
+  text: string,
+  kind: string,
+  documentId: string,
+): void {
+  if (
+    !Number.isSafeInteger(span.start) ||
+    !Number.isSafeInteger(span.end) ||
+    span.start < 0 ||
+    span.end <= span.start ||
+    span.end > text.length
+  ) {
+    throw new RangeError(
+      `Invalid ${kind} span [${span.start}, ${span.end}) in document "${documentId}" (UTF-16 length ${text.length}); offsets must be safe integers within the document.`,
+    );
+  }
+}
+
+function normalizedConceptKey(key: string | null | undefined): string | undefined {
+  return typeof key === 'string' && key.length > 0 ? key : undefined;
+}
+
 export interface EvaluateExtractionOptions {
   kValues?: readonly number[];
 }
@@ -57,8 +80,32 @@ export function evaluateExtraction(
   options: EvaluateExtractionOptions = {},
 ): EvaluationResult {
   const kValues = options.kValues ?? [5, 10, 20];
+  const seenK = new Set<number>();
+  for (const k of kValues) {
+    if (!Number.isSafeInteger(k) || k <= 0) {
+      throw new RangeError(`Evaluation K values must be positive safe integers (received ${String(k)}).`);
+    }
+    if (seenK.has(k)) throw new RangeError(`Duplicate evaluation K value: ${k}.`);
+    seenK.add(k);
+  }
+  const goldDocIds = new Set<string>();
+  for (const gDoc of goldDocs) {
+    if (!gDoc.id || goldDocIds.has(gDoc.id)) {
+      throw new Error(`Duplicate gold document ID or empty gold document ID: "${gDoc.id}".`);
+    }
+    goldDocIds.add(gDoc.id);
+  }
   const predictedByDocId = new Map<string, PredictedDocument>();
   for (const pDoc of predictedDocs) {
+    if (!pDoc.id || predictedByDocId.has(pDoc.id)) {
+      throw new Error(`Duplicate predicted document ID or empty predicted document ID: "${pDoc.id}".`);
+    }
+    if (!goldDocIds.has(pDoc.id)) {
+      throw new Error(`Predicted document "${pDoc.id}" has no matching gold document.`);
+    }
+    if (pDoc.elapsedMs !== undefined && (!Number.isFinite(pDoc.elapsedMs) || pDoc.elapsedMs < 0)) {
+      throw new RangeError(`Elapsed time for document "${pDoc.id}" must be finite and nonnegative.`);
+    }
     predictedByDocId.set(pDoc.id, pDoc);
   }
 
@@ -95,13 +142,17 @@ export function evaluateExtraction(
     // Deduplicate gold spans by exact half-open offset key
     const goldMap = new Map<string, GoldSpan>();
     for (const span of gDoc.spans) {
-      if (span.end <= span.start || span.start < 0 || span.end > gDoc.text.length) {
-        throw new RangeError(
-          `Invalid gold span [${span.start}, ${span.end}) in document "${gDoc.id}" (length ${gDoc.text.length}).`,
-        );
-      }
+      validateEvaluationSpan(span, gDoc.text, 'gold', gDoc.id);
       const key = spanKey(span.start, span.end);
-      if (!goldMap.has(key)) {
+      const previous = goldMap.get(key);
+      if (previous && (
+        previous.unknown !== span.unknown ||
+        previous.nested !== span.nested ||
+        normalizedConceptKey(previous.conceptKey) !== normalizedConceptKey(span.conceptKey)
+      )) {
+        throw new Error(`Conflicting duplicate gold annotation for span [${span.start}, ${span.end}) in document "${gDoc.id}".`);
+      }
+      if (!previous) {
         goldMap.set(key, span);
       }
       if (span.conceptKey !== undefined && span.conceptKey.length > 0) {
@@ -113,8 +164,13 @@ export function evaluateExtraction(
     const predMap = new Map<string, PredictedSpan>();
     const orderedUniquePreds: PredictedSpan[] = [];
     for (const span of pDoc?.spans ?? []) {
+      validateEvaluationSpan(span, gDoc.text, 'predicted', gDoc.id);
       const key = spanKey(span.start, span.end);
-      if (!predMap.has(key)) {
+      const previous = predMap.get(key);
+      if (previous && normalizedConceptKey(previous.conceptKey) !== normalizedConceptKey(span.conceptKey)) {
+        throw new Error(`Conflicting duplicate predicted concept mapping for span [${span.start}, ${span.end}) in document "${gDoc.id}".`);
+      }
+      if (!previous) {
         predMap.set(key, span);
         orderedUniquePreds.push(span);
       }
@@ -165,6 +221,7 @@ export function evaluateExtraction(
     // Explicit false rejections (gold spans placed in rejectedSpans)
     const rejectedKeys = new Set<string>();
     for (const rej of pDoc?.rejectedSpans ?? []) {
+      validateEvaluationSpan(rej, gDoc.text, 'rejected', gDoc.id);
       rejectedKeys.add(spanKey(rej.start, rej.end));
     }
     let docFalseRejections = 0;

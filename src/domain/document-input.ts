@@ -80,12 +80,19 @@ export function validateParsedDocument(doc: ParsedDocument): ParsedDocument {
     prevEnd = sec.end;
   }
 
+  prevEnd = 0;
   for (const ex of parsed.excludedRanges) {
     if (ex.end > len) {
       throw new RangeError(
         `ExcludedRange [${ex.start}, ${ex.end}) exceeds analyzed text length ${len}.`,
       );
     }
+    if (ex.start < prevEnd) {
+      throw new RangeError(
+        `ExcludedRange [${ex.start}, ${ex.end}) overlaps or is out of order after offset ${prevEnd}.`,
+      );
+    }
+    prevEnd = ex.end;
   }
 
   return parsed;
